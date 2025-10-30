@@ -1,0 +1,28 @@
+{
+  "name": "schedule-builder-ai",
+  "version": "0.0.0",
+  "description": "A Schedule builder using AI",
+  "keywords": [
+    "AI"
+  ],
+  "homepage": "https://github.com/Mykyta-G/Schedule-Builder-AI#readme",
+  "bugs": {
+    "url": "https://github.com/Mykyta-G/Schedule-Builder-AI/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mykyta-G/Schedule-Builder-AI.git"
+  },
+  "license": "MIT",
+  "author": "Mykyta, Gustav & Leon",
+  "type": "commonjs",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "test": "echo 'No tests yet' && exit 0"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0"
+  }
+}
