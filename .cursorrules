@@ -1,0 +1,86 @@
+# Schedule Builder AI - Cursor Rules
+
+## Project Structure
+- This is an Electron + Vue 3 application
+- Main Electron process: `main.js`
+- Vue app entry: `src/main.js`
+- Vue components: `src/components/`
+- Global styles: `src/main.css`
+- Preload script: `preload.js`
+
+## Tech Stack
+- **Electron** for desktop functionality
+- **Vue 3** with Composition API (use `setup()`)
+- **Vite** for bundling
+- **Vanilla CSS** (no CSS frameworks)
+
+## Critical Rules
+
+### DO:
+- Always use Vue 3 Composition API with `<script setup>` or `setup()` function
+- Keep components in `src/components/`
+- Use `window.api` for Electron IPC communication (exposed in preload.js)
+- Write responsive, mobile-friendly CSS
+- Test changes with `npm run dev`
+
+### DON'T:
+- Don't modify `main.js` (Electron main process) without understanding the consequences
+- Don't use class-based Vue components (use Composition API only)
+- Don't add CSS frameworks (Tailwind, Bootstrap, etc.) without discussion
+- Don't break existing IPC communication patterns
+- Don't modify `preload.js` without updating `main.js` IPC handlers
+- Don't create nested component folders more than 2 levels deep
+
+## Code Style
+- Use camelCase for JavaScript variables and functions
+- Use kebab-case for component file names
+- Use PascalCase for Vue component names
+- Use 2 spaces for indentation
+- Always add error handling for async IPC calls
+- Use template literals for strings with variables
+
+## Vue Component Structure
+```vue
+<template>
+  <!-- Template here -->
+</template>
+
+<script>
+import { defineComponent, ref } from 'vue';
+
+export default defineComponent({
+  name: 'ComponentName',
+  setup() {
+    // Composition API logic here
+    return { /* reactive refs */ };
+  },
+});
+</script>
+
+<style scoped>
+/* Scoped styles here */
+</style>
+```
+
+## IPC Communication
+- Use `window.api.createSchedule(data)` for creating schedules
+- All IPC calls return promises - handle with async/await
+- Check `main.js` for available IPC handlers before creating new ones
+
+## File Locations
+- Schedules are saved to `/Schedules` folder in project root
+- Don't move or rename the Schedules folder
+- Keep all assets in `src/` directory
+
+## When Adding Features
+1. Create new Vue components in `src/components/`
+2. Import and register in App.vue or parent component
+3. Use navigation events for routing: `window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'pageName' } }))`
+4. Test IPC calls in console before implementing UI
+
+## Important Notes
+- The app uses client-side routing via custom events
+- Hot reload is enabled in dev mode via electron-reload
+- Vite dev server runs on port 5173
+- Always test with `npm run dev` before committing
+
