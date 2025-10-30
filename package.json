@@ -19,11 +19,20 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron .",
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "build": "vite build",
     "test": "echo 'No tests yet' && exit 0"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "electron": "^39.0.0",
-    "electron-reload": "^2.0.0-alpha.1"
+    "electron-reload": "^2.0.0-alpha.1",
+    "vite": "^7.1.12",
+    "wait-on": "^9.0.1"
+  },
+  "dependencies": {
+    "vue": "^3.5.22"
   }
 }
