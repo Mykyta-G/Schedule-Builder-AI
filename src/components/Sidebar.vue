@@ -29,8 +29,20 @@
       {{ errorMessage }}
     </div>
 
+    <!-- Global search -->
+    <div class="search-section" data-section="sök">
+      <h3 class="section-title">Sök</h3>
+      <input
+        v-model="searchQuery"
+        type="text"
+        placeholder="Sök i funktioner..."
+        class="search-input"
+        @input="handleSearch"
+      />
+    </div>
+
     <!-- Month calendar -->
-    <div class="calendar-section">
+    <div class="calendar-section" data-section="kalender">
       <h3 class="section-title">Kalender</h3>
       <div class="calendar">
         <div class="calendar-header">
@@ -64,7 +76,7 @@
     </div>
 
     <!-- Block form -->
-    <div class="block-form">
+    <div class="block-form" data-section="skapa block">
       <h3 class="section-title">Skapa block</h3>
       <div class="form-group">
         <label for="lesson-input">Lektioner</label>
@@ -106,7 +118,7 @@
     </div>
 
     <!-- Old schedules dropdown -->
-    <div class="schedules-section">
+    <div class="schedules-section" data-section="gamla scheman">
       <h3 class="section-title">Gamla scheman</h3>
       <div class="dropdown-wrapper">
         <input
@@ -133,20 +145,8 @@
       </div>
     </div>
 
-    <!-- Global search -->
-    <div class="search-section">
-      <h3 class="section-title">Sök</h3>
-      <input
-        v-model="searchQuery"
-        type="text"
-        placeholder="Sök i allt..."
-        class="search-input"
-        @input="handleSearch"
-      />
-    </div>
-
     <!-- Block list -->
-    <div class="blocks-section">
+    <div class="blocks-section" data-section="block">
       <h3 class="section-title">Block ({{ activeSchemaBlocks.length }})</h3>
       <div class="blocks-list" ref="blocksListRef">
         <div
@@ -509,63 +509,62 @@ export default defineComponent({
       }, 200);
     };
 
-    const performSearch = async () => {
+    const performSearch = () => {
       const query = searchQuery.value.toLowerCase().trim();
       if (!query) {
-        highlightedBlockId.value = null;
         return;
       }
 
-      // Search in schedule names (use full list, not filtered)
-      const scheduleMatch = schedules.value.find(s =>
-        s.name.toLowerCase().includes(query)
-      );
+      // Define sections and their search terms
+      const sections = [
+        { name: 'kalender', keywords: ['kalender', 'kal', 'datum', 'månad', 'vecka'] },
+        { name: 'skapa block', keywords: ['skapa', 'block', 'lektioner', 'sal', 'lärare', 'lägg till', 'ny', 'nytt'] },
+        { name: 'gamla scheman', keywords: ['gamla', 'scheman', 'schema', 'tidigare', 'dropdown', 'välj'] },
+        { name: 'block', keywords: ['block', 'lista', 'blocklista'] },
+        { name: 'sök', keywords: ['sök', 'söka', 'find'] }
+      ];
 
-      // Search in current blocks
-      const blockMatch = activeSchemaBlocks.value.find(block =>
-        (block.title && block.title.toLowerCase().includes(query)) ||
-        (block.room && block.room.toLowerCase().includes(query)) ||
-        (block.teacher && block.teacher.toLowerCase().includes(query))
-      );
+      // Find matching section - check if query matches section name or any keyword
+      const matchingSection = sections.find(section => {
+        const nameMatch = section.name.toLowerCase().includes(query);
+        const keywordMatch = section.keywords.some(keyword => 
+          keyword.includes(query) || query.includes(keyword)
+        );
+        return nameMatch || keywordMatch;
+      });
 
-      if (blockMatch) {
-        highlightedBlockId.value = blockMatch.id;
-        nextTick(() => {
-          scrollToHighlightedBlock(blockMatch.id);
-        });
-      } else if (scheduleMatch) {
-        // If only schedule match, switch to that schedule
-        activeSchemaId.value = scheduleMatch.id;
-        await loadSchema(scheduleMatch.id);
-        // After loading, search for blocks in the new schedule
-        nextTick(() => {
-          const newBlockMatch = activeSchemaBlocks.value.find(block =>
-            (block.title && block.title.toLowerCase().includes(query)) ||
-            (block.room && block.room.toLowerCase().includes(query)) ||
-            (block.teacher && block.teacher.toLowerCase().includes(query))
-          );
-          if (newBlockMatch) {
-            highlightedBlockId.value = newBlockMatch.id;
-            nextTick(() => {
-              scrollToHighlightedBlock(newBlockMatch.id);
-            });
-          }
-        });
+      if (matchingSection) {
+        scrollToSection(matchingSection.name);
       }
     };
 
-    const scrollToHighlightedBlock = (blockId) => {
-      const blockRef = blockRefs.value[blockId];
-      if (blockRef && blocksListRef.value) {
-        blockRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+    const scrollToSection = (sectionName) => {
+      const sectionElement = document.querySelector(`[data-section="${sectionName.toLowerCase()}"]`);
+      if (sectionElement) {
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) {
+          const sidebarRect = sidebar.getBoundingClientRect();
+          const sectionRect = sectionElement.getBoundingClientRect();
+          
+          // Calculate scroll position
+          const scrollTop = sidebar.scrollTop;
+          const sectionOffsetTop = sectionRect.top - sidebarRect.top + scrollTop;
+          
+          // Scroll to show the section at the top (with some padding)
+          const targetScroll = sectionOffsetTop - 20;
+          
+          sidebar.scrollTo({
+            top: Math.max(0, targetScroll),
+            behavior: 'smooth'
+          });
 
-      // Remove highlight after 2.5s
-      setTimeout(() => {
-        if (highlightedBlockId.value === blockId) {
-          highlightedBlockId.value = null;
+          // Temporarily highlight the section
+          sectionElement.classList.add('is-highlighted-section');
+          setTimeout(() => {
+            sectionElement.classList.remove('is-highlighted-section');
+          }, 2000);
         }
-      }, 2500);
+      }
     };
 
     const setBlockRef = (el, blockId) => {
@@ -669,7 +668,8 @@ export default defineComponent({
       filterSchedules,
       handleSearch,
       setBlockRef,
-      selectCalendarDay
+      selectCalendarDay,
+      scrollToSection
     };
   },
 });
@@ -833,6 +833,24 @@ export default defineComponent({
   margin-bottom: 24px;
   padding-bottom: 24px;
   border-bottom: 1px solid #e5e7eb;
+  transition: background 0.3s ease;
+}
+
+.search-section.is-highlighted-section,
+.calendar-section.is-highlighted-section,
+.block-form.is-highlighted-section,
+.schedules-section.is-highlighted-section,
+.blocks-section.is-highlighted-section {
+  background: #fef3c7;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 8px -8px;
+  animation: sectionHighlight 0.5s ease;
+}
+
+@keyframes sectionHighlight {
+  0%, 100% { background: #fef3c7; }
+  50% { background: #fde68a; }
 }
 
 .search-input {
