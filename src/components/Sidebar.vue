@@ -75,6 +75,38 @@
       </div>
     </div>
 
+    <!-- Old schedules dropdown -->
+    <div class="schedules-section" data-section="gamla scheman">
+      <h3 class="section-title schedules-title" @click="toggleSchedulesDropdown">
+        Gamla scheman
+        <span class="dropdown-arrow" :class="{ open: schedulesDropdownOpen }">▼</span>
+      </h3>
+      <div v-if="schedulesDropdownOpen" class="schedules-dropdown-content">
+        <input
+          v-model="scheduleFilter"
+          type="text"
+          placeholder="Sök schema..."
+          class="schedule-search-input"
+          @input="filterSchedules"
+          @click.stop
+        />
+        <div class="schedules-list">
+          <div
+            v-for="schedule in filteredSchedules"
+            :key="schedule.id"
+            class="schedule-item"
+            :class="{ active: activeSchemaId === schedule.id }"
+            @click="selectSchedule(schedule.id)"
+          >
+            {{ schedule.name }}
+          </div>
+          <div v-if="filteredSchedules.length === 0" class="no-schedules">
+            Inga scheman hittades
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Block form -->
     <div class="block-form" data-section="skapa block">
       <h3 class="section-title">Skapa block</h3>
@@ -115,34 +147,6 @@
       >
         Lägg till block
       </button>
-    </div>
-
-    <!-- Old schedules dropdown -->
-    <div class="schedules-section" data-section="gamla scheman">
-      <h3 class="section-title">Gamla scheman</h3>
-      <div class="dropdown-wrapper">
-        <input
-          v-model="scheduleFilter"
-          type="text"
-          placeholder="Sök schema..."
-          class="schedule-search-input"
-          @input="filterSchedules"
-        />
-        <select
-          v-model="activeSchemaId"
-          @change="onScheduleChange"
-          class="schedule-dropdown"
-        >
-          <option value="">-- Välj schema --</option>
-          <option
-            v-for="schedule in filteredSchedules"
-            :key="schedule.id"
-            :value="schedule.id"
-          >
-            {{ schedule.name }}
-          </option>
-        </select>
-      </div>
     </div>
 
     <!-- Block list -->
@@ -233,6 +237,7 @@ export default defineComponent({
     const activeSchemaBlocks = ref([]);
     const scheduleFilter = ref('');
     const filteredSchedules = ref([]);
+    const schedulesDropdownOpen = ref(false);
     const searchQuery = ref('');
     const editingBlockId = ref(null);
     const editingBlock = reactive({
@@ -486,6 +491,16 @@ export default defineComponent({
       cancelEditBlock();
     };
 
+    const toggleSchedulesDropdown = () => {
+      schedulesDropdownOpen.value = !schedulesDropdownOpen.value;
+    };
+
+    const selectSchedule = async (scheduleId) => {
+      activeSchemaId.value = scheduleId;
+      await loadSchema(scheduleId);
+      schedulesDropdownOpen.value = false;
+    };
+
     const onScheduleChange = async () => {
       await loadSchema(activeSchemaId.value);
     };
@@ -649,6 +664,7 @@ export default defineComponent({
       activeSchemaBlocks,
       scheduleFilter,
       filteredSchedules,
+      schedulesDropdownOpen,
       searchQuery,
       editingBlockId,
       editingBlock,
@@ -664,6 +680,8 @@ export default defineComponent({
       startEditBlock,
       cancelEditBlock,
       saveBlockEdit,
+      toggleSchedulesDropdown,
+      selectSchedule,
       onScheduleChange,
       filterSchedules,
       handleSearch,
@@ -802,31 +820,106 @@ export default defineComponent({
 
 .schedules-section {
   margin-bottom: 24px;
-  padding-bottom: 24px;
+  padding-bottom: 0;
   border-bottom: 1px solid #e5e7eb;
 }
 
-.dropdown-wrapper {
+.schedules-title {
+  cursor: pointer;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.schedules-title:hover {
+  color: #8b5cf6;
+}
+
+.dropdown-arrow {
+  font-size: 12px;
+  color: #6b7280;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.dropdown-arrow.open {
+  transform: rotate(180deg);
+}
+
+.schedules-title:hover .dropdown-arrow {
+  color: #8b5cf6;
+}
+
+.schedules-dropdown-content {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .schedule-search-input {
-  padding: 8px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 14px;
-}
-
-.schedule-dropdown {
   width: 100%;
   padding: 8px 12px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
   font-size: 14px;
-  background: white;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
+.schedule-search-input:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.schedules-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.schedule-item {
+  padding: 10px 12px;
   cursor: pointer;
+  border-bottom: 1px solid #e5e7eb;
+  transition: background 0.2s ease, color 0.2s ease;
+  font-size: 14px;
+}
+
+.schedule-item:last-child {
+  border-bottom: none;
+}
+
+.schedule-item:hover {
+  background: #f3f4f6;
+  color: #8b5cf6;
+}
+
+.schedule-item.active {
+  background: #ede9fe;
+  color: #7c3aed;
+  font-weight: 500;
+}
+
+.no-schedules {
+  padding: 12px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .search-section {
