@@ -1,0 +1,16 @@
+{
+  "id": "schema-1761925928222",
+  "name": "schema-1761925928222",
+  "createdAt": "2025-10-31T15:52:08.223Z",
+  "updatedAt": "2025-10-31T15:52:14.224Z",
+  "blocks": [
+    {
+      "id": "block-1761925928222-1zkbmgftv",
+      "title": "Matematik 2",
+      "room": "A101",
+      "teacher": "Andersson",
+      "createdAt": "2025-10-31T15:52:08.222Z",
+      "updatedAt": "2025-10-31T15:52:14.223Z"
+    }
+  ]
+}

@@ -110,35 +110,119 @@
     <!-- Block form -->
     <div class="block-form" data-section="skapa block">
       <h3 class="section-title">Skapa block</h3>
+      
+      <!-- School form selector -->
+      <div class="school-form-selector">
+        <button
+          class="school-form-btn"
+          :class="{ active: selectedSchoolForm === 'grundskola' }"
+          @click="selectedSchoolForm = 'grundskola'"
+        >
+          Grundskola
+        </button>
+        <button
+          class="school-form-btn"
+          :class="{ active: selectedSchoolForm === 'gymnasiet' }"
+          @click="selectedSchoolForm = 'gymnasiet'"
+        >
+          Gymnasiet
+        </button>
+      </div>
+      
       <div class="form-group">
         <label for="lesson-input">Lektioner</label>
-        <input
-          id="lesson-input"
-          v-model="newBlock.title"
-          type="text"
-          placeholder="T.ex. Matematik"
-          class="form-input"
-        />
+        <div class="subject-dropdown-wrapper">
+          <input
+            id="lesson-input"
+            v-model="subjectSearchQuery"
+            type="text"
+            placeholder="Sök ämne..."
+            class="form-input subject-search-input"
+            @focus="handleSubjectFocus"
+            @input="filterSubjects"
+            @blur="handleSubjectBlur"
+          />
+          <div v-if="showSubjectDropdown" class="subject-dropdown">
+            <div
+              v-for="subject in filteredSubjectsBySchoolForm"
+              :key="subject.syllabusCode || subject.code"
+              class="subject-item"
+              @mousedown.prevent="selectSubject(subject)"
+            >
+              <div class="subject-name">{{ subject.displayName }}</div>
+              <div class="subject-meta">
+                <span class="subject-code" v-if="subject.syllabusCode || subject.code">
+                  {{ subject.syllabusCode || subject.code }}
+                </span>
+                <span class="subject-school-form">
+                  {{ subject.schoolForm === 'gymnasiet' ? 'Gymnasiet' : 'Grundskola' }}
+                </span>
+              </div>
+            </div>
+            <div v-if="filteredSubjectsBySchoolForm.length === 0 && subjectSearchQuery && !isLoadingSubjects" class="no-subjects">
+              Inga ämnen hittades för {{ selectedSchoolForm === 'gymnasiet' ? 'gymnasiet' : 'grundskola' }}
+            </div>
+            <div v-if="isLoadingSubjects" class="loading-subjects">
+              Laddar ämnen...
+            </div>
+          </div>
+        </div>
       </div>
       <div class="form-group">
         <label for="room-input">Sal</label>
-        <input
-          id="room-input"
-          v-model="newBlock.room"
-          type="text"
-          placeholder="T.ex. A101"
-          class="form-input"
-        />
+        <div class="subject-dropdown-wrapper">
+          <input
+            id="room-input"
+            v-model="roomSearchQuery"
+            type="text"
+            placeholder="Sök sal..."
+            class="form-input subject-search-input"
+            @focus="handleRoomFocus"
+            @input="filterRooms"
+            @blur="handleRoomBlur"
+          />
+          <div v-if="showRoomDropdown" class="subject-dropdown">
+            <div
+              v-for="room in filteredRoomsList"
+              :key="room"
+              class="subject-item"
+              @mousedown.prevent="selectRoom(room)"
+            >
+              <span class="subject-name">{{ room }}</span>
+            </div>
+            <div v-if="filteredRoomsList.length === 0 && roomSearchQuery" class="no-subjects">
+              Inga salar hittades
+            </div>
+          </div>
+        </div>
       </div>
       <div class="form-group">
         <label for="teacher-input">Lärare</label>
-        <input
-          id="teacher-input"
-          v-model="newBlock.teacher"
-          type="text"
-          placeholder="T.ex. Andersson"
-          class="form-input"
-        />
+        <div class="subject-dropdown-wrapper">
+          <input
+            id="teacher-input"
+            v-model="teacherSearchQuery"
+            type="text"
+            placeholder="Sök lärare..."
+            class="form-input subject-search-input"
+            @focus="handleTeacherFocus"
+            @input="filterTeachers"
+            @blur="handleTeacherBlur"
+          />
+          <div v-if="showTeacherDropdown" class="subject-dropdown">
+            <div
+              v-for="teacher in filteredTeachersList"
+              :key="teacher"
+              class="subject-item"
+              @mousedown.prevent="selectTeacher(teacher)"
+            >
+              <span class="subject-name">{{ teacher }}</span>
+            </div>
+            <div v-if="filteredTeachersList.length === 0 && teacherSearchQuery" class="no-subjects">
+              Inga lärare hittades
+            </div>
+          </div>
+        </div>
       </div>
       <button
         class="add-block-btn"
@@ -239,6 +323,37 @@ export default defineComponent({
     const filteredSchedules = ref([]);
     const schedulesDropdownOpen = ref(false);
     const searchQuery = ref('');
+    
+    // Subject dropdown state
+    const subjects = ref([]);
+    const filteredSubjects = ref([]);
+    const showSubjectDropdown = ref(false);
+    const subjectSearchQuery = ref('');
+    const isLoadingSubjects = ref(false);
+    const selectedSchoolForm = ref('gymnasiet'); // Default to gymnasiet
+    
+    // Room dropdown state
+    const roomsList = ref([
+      'A101', 'A102', 'A103', 'A201', 'A202', 'A203',
+      'B101', 'B102', 'B103', 'B201', 'B202', 'B203',
+      'C101', 'C102', 'C103', 'C201', 'C202', 'C203',
+      'D101', 'D102', 'D103', 'Lab1', 'Lab2', 'Lab3',
+      'Musikrum', 'Bildrum', 'Idrottshall', 'Bibliotek', 'Aula'
+    ]);
+    const filteredRoomsList = ref([]);
+    const showRoomDropdown = ref(false);
+    const roomSearchQuery = ref('');
+    
+    // Teacher dropdown state
+    const teachersList = ref([
+      'Andersson', 'Berg', 'Carlsson', 'Dahl', 'Eriksson', 'Forsberg',
+      'Gustafsson', 'Hansson', 'Johansson', 'Karlsson', 'Larsson', 'Nilsson',
+      'Olsson', 'Persson', 'Svensson', 'Wallin', 'Bergström', 'Engström'
+    ]);
+    const filteredTeachersList = ref([]);
+    const showTeacherDropdown = ref(false);
+    const teacherSearchQuery = ref('');
+    
     const editingBlockId = ref(null);
     const editingBlock = reactive({
       id: null,
@@ -337,7 +452,36 @@ export default defineComponent({
 
     // Computed
     const canCreateBlock = computed(() => {
-      return activeSchemaId.value && (newBlock.title.trim() || newBlock.room.trim() || newBlock.teacher.trim());
+      // Allow if we have at least one field filled
+      const hasTitle = newBlock.title.trim().length > 0;
+      const hasRoom = newBlock.room.trim().length > 0;
+      const hasTeacher = newBlock.teacher.trim().length > 0;
+      
+      // If no schema is selected, still allow creating (will create/use default schema)
+      const hasAnyField = hasTitle || hasRoom || hasTeacher;
+      
+      console.log('canCreateBlock check:', {
+        hasTitle,
+        hasRoom,
+        hasTeacher,
+        hasAnyField,
+        activeSchemaId: activeSchemaId.value,
+        result: hasAnyField
+      });
+      
+      return hasAnyField; // Allow creation if any field is filled
+    });
+
+    // Filter subjects by school form
+    const filteredSubjectsBySchoolForm = computed(() => {
+      if (!filteredSubjects.value || !Array.isArray(filteredSubjects.value)) {
+        return [];
+      }
+      
+      return filteredSubjects.value.filter(subject => {
+        // Filter by selected school form
+        return subject.schoolForm === selectedSchoolForm.value;
+      });
     });
 
     // Methods
@@ -381,19 +525,36 @@ export default defineComponent({
         }
         const schema = await window.api.readSchedule(scheduleId);
         if (schema) {
-          activeSchema.value = schema;
-          activeSchemaBlocks.value = schema.blocks || [];
+          // Ensure we have a clean, reactive object
+          activeSchema.value = {
+            id: schema.id || scheduleId,
+            name: schema.name || scheduleId,
+            createdAt: schema.createdAt || new Date().toISOString(),
+            updatedAt: schema.updatedAt || new Date().toISOString(),
+            blocks: []
+          };
+          // Ensure blocks is an array and map to clean objects
+          activeSchemaBlocks.value = (schema.blocks || []).map(block => ({
+            id: block.id,
+            title: String(block.title || ''),
+            room: String(block.room || ''),
+            teacher: String(block.teacher || ''),
+            createdAt: block.createdAt || new Date().toISOString(),
+            updatedAt: block.updatedAt || new Date().toISOString()
+          }));
+          activeSchema.value.blocks = [...activeSchemaBlocks.value];
         } else {
           // Create new schema if it doesn't exist
-          activeSchema.value = {
+          const newSchema = {
             id: scheduleId,
             name: scheduleId,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             blocks: []
           };
+          activeSchema.value = { ...newSchema };
           activeSchemaBlocks.value = [];
-          await saveSchema(activeSchema.value);
+          await saveSchema(newSchema);
         }
       } catch (error) {
         console.error('Error loading schema:', error);
@@ -407,47 +568,129 @@ export default defineComponent({
           showError('IPC API inte tillgänglig');
           return;
         }
-        const result = await window.api.saveSchedule(schema);
+        
+        // Create a deep clone of the schema to ensure it's serializable
+        // Remove any functions, circular references, or non-serializable data
+        const serializableSchema = {
+          id: schema.id,
+          name: schema.name || schema.id,
+          createdAt: schema.createdAt || new Date().toISOString(),
+          updatedAt: schema.updatedAt || new Date().toISOString(),
+          blocks: (schema.blocks || []).map(block => ({
+            id: block.id,
+            title: String(block.title || ''),
+            room: String(block.room || ''),
+            teacher: String(block.teacher || ''),
+            createdAt: block.createdAt || new Date().toISOString(),
+            updatedAt: block.updatedAt || new Date().toISOString()
+          }))
+        };
+        
+        console.log('Saving schema:', serializableSchema);
+        const result = await window.api.saveSchedule(serializableSchema);
         if (!result.success) {
           showError(result.error || 'Kunde inte spara schema');
+          return;
         }
+        console.log('Schema saved successfully:', result);
       } catch (error) {
         console.error('Error saving schema:', error);
-        showError('Kunde inte spara schema');
+        showError('Kunde inte spara schema: ' + error.message);
       }
     };
 
     const createBlock = async () => {
-      if (!activeSchemaId.value) {
-        showError('Välj ett schema först');
-        return;
-      }
-
+      console.log('createBlock called', { 
+        activeSchemaId: activeSchemaId.value, 
+        newBlock: { ...newBlock },
+        canCreateBlock: canCreateBlock.value 
+      });
+      
+      // Validate that at least one field is filled
       if (!newBlock.title.trim() && !newBlock.room.trim() && !newBlock.teacher.trim()) {
         showError('Fyll i minst ett fält');
         return;
       }
 
-      const block = {
-        id: `block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        title: newBlock.title.trim() || '',
-        room: newBlock.room.trim() || '',
-        teacher: newBlock.teacher.trim() || '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      activeSchemaBlocks.value.unshift(block);
-      if (activeSchema.value) {
-        activeSchema.value.blocks = activeSchemaBlocks.value;
-        activeSchema.value.updatedAt = new Date().toISOString();
-        await saveSchema(activeSchema.value);
+      // If no schema is selected, create/use a default schema
+      if (!activeSchemaId.value) {
+        const defaultSchemaId = `schema-${Date.now()}`;
+        activeSchemaId.value = defaultSchemaId;
+        console.log('No schema selected, using default:', defaultSchemaId);
       }
 
-      // Reset form
-      newBlock.title = '';
-      newBlock.room = '';
-      newBlock.teacher = '';
+      try {
+        const block = {
+          id: `block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          title: newBlock.title.trim() || '',
+          room: newBlock.room.trim() || '',
+          teacher: newBlock.teacher.trim() || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        console.log('Creating block:', block);
+
+        // Load current schema if not loaded
+        if (!activeSchema.value) {
+          await loadSchema(activeSchemaId.value);
+        }
+
+        // Initialize blocks array if it doesn't exist
+        if (!activeSchemaBlocks.value) {
+          activeSchemaBlocks.value = [];
+        }
+
+        // Add block to the beginning of the list - use new array reference for reactivity
+        const updatedBlocks = [block, ...activeSchemaBlocks.value];
+        activeSchemaBlocks.value = updatedBlocks;
+        
+        // Create a clean, serializable schema object for saving
+        const schemaToSave = {
+          id: activeSchemaId.value,
+          name: activeSchema.value?.name || activeSchemaId.value,
+          createdAt: activeSchema.value?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          blocks: updatedBlocks.map(b => ({
+            id: b.id,
+            title: String(b.title || ''),
+            room: String(b.room || ''),
+            teacher: String(b.teacher || ''),
+            createdAt: b.createdAt || new Date().toISOString(),
+            updatedAt: b.updatedAt || new Date().toISOString()
+          }))
+        };
+
+        // Update active schema reference (ensure reactivity)
+        activeSchema.value = {
+          id: schemaToSave.id,
+          name: schemaToSave.name,
+          createdAt: schemaToSave.createdAt,
+          updatedAt: schemaToSave.updatedAt,
+          blocks: [...schemaToSave.blocks]
+        };
+
+        // Save to disk
+        await saveSchema(schemaToSave);
+        console.log('Block created and saved successfully');
+        console.log('Active blocks count:', activeSchemaBlocks.value.length);
+
+        // Reset form
+        newBlock.title = '';
+        newBlock.room = '';
+        newBlock.teacher = '';
+        subjectSearchQuery.value = '';
+        roomSearchQuery.value = '';
+        teacherSearchQuery.value = '';
+        
+        // Close dropdowns
+        showSubjectDropdown.value = false;
+        showRoomDropdown.value = false;
+        showTeacherDropdown.value = false;
+      } catch (error) {
+        console.error('Error creating block:', error);
+        showError('Kunde inte skapa block: ' + error.message);
+      }
     };
 
     const startEditBlock = (block) => {
@@ -505,6 +748,70 @@ export default defineComponent({
       await loadSchema(activeSchemaId.value);
     };
 
+    // Comprehensive fallback subjects list
+    const getFallbackSubjects = () => {
+      return [
+        // Grundskola
+        { code: 'MAT', name: 'Matematik', displayName: 'Matematik', schoolForm: 'grundskola', syllabusCode: 'GRGRMAT01' },
+        { code: 'SVE', name: 'Svenska', displayName: 'Svenska', schoolForm: 'grundskola', syllabusCode: 'GRGRSVE01' },
+        { code: 'ENG', name: 'Engelska', displayName: 'Engelska', schoolForm: 'grundskola', syllabusCode: 'GRGRENG01' },
+        { code: 'FYS', name: 'Fysik', displayName: 'Fysik', schoolForm: 'grundskola', syllabusCode: 'GRGRFYS01' },
+        { code: 'KEM', name: 'Kemi', displayName: 'Kemi', schoolForm: 'grundskola', syllabusCode: 'GRGRKEM01' },
+        { code: 'BIO', name: 'Biologi', displayName: 'Biologi', schoolForm: 'grundskola', syllabusCode: 'GRGRBIO01' },
+        { code: 'GEO', name: 'Geografi', displayName: 'Geografi', schoolForm: 'grundskola', syllabusCode: 'GRGRGEO01' },
+        { code: 'HIS', name: 'Historia', displayName: 'Historia', schoolForm: 'grundskola', syllabusCode: 'GRGRHIS01' },
+        { code: 'SO', name: 'Samhällskunskap', displayName: 'Samhällskunskap', schoolForm: 'grundskola', syllabusCode: 'GRGRSO01' },
+        { code: 'REL', name: 'Religionskunskap', displayName: 'Religionskunskap', schoolForm: 'grundskola', syllabusCode: 'GRGRREL01' },
+        { code: 'MUS', name: 'Musik', displayName: 'Musik', schoolForm: 'grundskola', syllabusCode: 'GRGRMUS01' },
+        { code: 'BIL', name: 'Bild', displayName: 'Bild', schoolForm: 'grundskola', syllabusCode: 'GRGRBIL01' },
+        { code: 'IDH', name: 'Idrott och hälsa', displayName: 'Idrott och hälsa', schoolForm: 'grundskola', syllabusCode: 'GRGRIDH01' },
+        { code: 'SLO', name: 'Slöjd', displayName: 'Slöjd', schoolForm: 'grundskola', syllabusCode: 'GRGRSLO01' },
+        { code: 'HEM', name: 'Hem- och konsumentkunskap', displayName: 'Hem- och konsumentkunskap', schoolForm: 'grundskola', syllabusCode: 'GRGRHEM01' },
+        { code: 'TEK', name: 'Teknik', displayName: 'Teknik', schoolForm: 'grundskola', syllabusCode: 'GRGRTEK01' },
+        // Gymnasiet
+        { code: 'MAT', name: 'Matematik 1', displayName: 'Matematik 1', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01' },
+        { code: 'MAT', name: 'Matematik 1a', displayName: 'Matematik 1a', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01a' },
+        { code: 'MAT', name: 'Matematik 1b', displayName: 'Matematik 1b', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01b' },
+        { code: 'MAT', name: 'Matematik 1c', displayName: 'Matematik 1c', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01c' },
+        { code: 'MAT', name: 'Matematik 2', displayName: 'Matematik 2', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02' },
+        { code: 'MAT', name: 'Matematik 2a', displayName: 'Matematik 2a', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02a' },
+        { code: 'MAT', name: 'Matematik 2b', displayName: 'Matematik 2b', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02b' },
+        { code: 'MAT', name: 'Matematik 2c', displayName: 'Matematik 2c', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02c' },
+        { code: 'MAT', name: 'Matematik 3', displayName: 'Matematik 3', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT03' },
+        { code: 'MAT', name: 'Matematik 3b', displayName: 'Matematik 3b', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT03b' },
+        { code: 'MAT', name: 'Matematik 3c', displayName: 'Matematik 3c', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT03c' },
+        { code: 'MAT', name: 'Matematik 4', displayName: 'Matematik 4', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT04' },
+        { code: 'MAT', name: 'Matematik 5', displayName: 'Matematik 5', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT05' },
+        { code: 'SVE', name: 'Svenska 1', displayName: 'Svenska 1', schoolForm: 'gymnasiet', syllabusCode: 'SVESVE01' },
+        { code: 'SVE', name: 'Svenska 2', displayName: 'Svenska 2', schoolForm: 'gymnasiet', syllabusCode: 'SVESVE02' },
+        { code: 'SVE', name: 'Svenska 3', displayName: 'Svenska 3', schoolForm: 'gymnasiet', syllabusCode: 'SVESVE03' },
+        { code: 'ENG', name: 'Engelska 5', displayName: 'Engelska 5', schoolForm: 'gymnasiet', syllabusCode: 'ENGENG05' },
+        { code: 'ENG', name: 'Engelska 6', displayName: 'Engelska 6', schoolForm: 'gymnasiet', syllabusCode: 'ENGENG06' },
+        { code: 'ENG', name: 'Engelska 7', displayName: 'Engelska 7', schoolForm: 'gymnasiet', syllabusCode: 'ENGENG07' },
+        { code: 'FYS', name: 'Fysik 1', displayName: 'Fysik 1', schoolForm: 'gymnasiet', syllabusCode: 'FYSFYS01' },
+        { code: 'FYS', name: 'Fysik 2', displayName: 'Fysik 2', schoolForm: 'gymnasiet', syllabusCode: 'FYSFYS02' },
+        { code: 'KEM', name: 'Kemi 1', displayName: 'Kemi 1', schoolForm: 'gymnasiet', syllabusCode: 'KEMKEM01' },
+        { code: 'KEM', name: 'Kemi 2', displayName: 'Kemi 2', schoolForm: 'gymnasiet', syllabusCode: 'KEMKEM02' },
+        { code: 'BIO', name: 'Biologi 1', displayName: 'Biologi 1', schoolForm: 'gymnasiet', syllabusCode: 'BIOBIO01' },
+        { code: 'BIO', name: 'Biologi 2', displayName: 'Biologi 2', schoolForm: 'gymnasiet', syllabusCode: 'BIOBIO02' },
+        { code: 'HIS', name: 'Historia 1a1', displayName: 'Historia 1a1', schoolForm: 'gymnasiet', syllabusCode: 'HISHIS01a1' },
+        { code: 'HIS', name: 'Historia 1a2', displayName: 'Historia 1a2', schoolForm: 'gymnasiet', syllabusCode: 'HISHIS01a2' },
+        { code: 'HIS', name: 'Historia 1b', displayName: 'Historia 1b', schoolForm: 'gymnasiet', syllabusCode: 'HISHIS01b' },
+        { code: 'GEO', name: 'Geografi 1', displayName: 'Geografi 1', schoolForm: 'gymnasiet', syllabusCode: 'GEOGEO01' },
+        { code: 'SO', name: 'Samhällskunskap 1b', displayName: 'Samhällskunskap 1b', schoolForm: 'gymnasiet', syllabusCode: 'SOSO01b' },
+        { code: 'SO', name: 'Samhällskunskap 2', displayName: 'Samhällskunskap 2', schoolForm: 'gymnasiet', syllabusCode: 'SOSO02' },
+        { code: 'REL', name: 'Religionskunskap', displayName: 'Religionskunskap', schoolForm: 'gymnasiet', syllabusCode: 'RELREL01' },
+        { code: 'PSY', name: 'Psykologi 1', displayName: 'Psykologi 1', schoolForm: 'gymnasiet', syllabusCode: 'PSYPSY01' },
+        { code: 'FIL', name: 'Filosofi', displayName: 'Filosofi', schoolForm: 'gymnasiet', syllabusCode: 'FILFIL01' },
+        { code: 'SPA', name: 'Spanska', displayName: 'Spanska', schoolForm: 'gymnasiet', syllabusCode: 'SPASPA01' },
+        { code: 'FRA', name: 'Franska', displayName: 'Franska', schoolForm: 'gymnasiet', syllabusCode: 'FRAFRA01' },
+        { code: 'TYS', name: 'Tyska', displayName: 'Tyska', schoolForm: 'gymnasiet', syllabusCode: 'TYSTYS01' },
+        { code: 'PROG', name: 'Programmering', displayName: 'Programmering', schoolForm: 'gymnasiet', syllabusCode: 'PROPROG01' },
+        { code: 'WEB', name: 'Webbutveckling', displayName: 'Webbutveckling', schoolForm: 'gymnasiet', syllabusCode: 'WEBWEB01' },
+        { code: 'DAOD', name: 'Datorteknik', displayName: 'Datorteknik', schoolForm: 'gymnasiet', syllabusCode: 'DAODAO01' }
+      ];
+    };
+
     const filterSchedules = () => {
       const query = scheduleFilter.value.toLowerCase().trim();
       if (!query) {
@@ -514,6 +821,314 @@ export default defineComponent({
       filteredSchedules.value = schedules.value.filter(s =>
         s.name.toLowerCase().includes(query)
       );
+    };
+
+    // Load subjects from Skolverket API
+    const loadSubjects = async () => {
+      if (subjects.value.length > 0) {
+        // Already loaded, just filter
+        filterSubjects();
+        return;
+      }
+
+      isLoadingSubjects.value = true;
+      
+      try {
+        const allSubjects = [];
+        
+        // Strategy 1: Try /syllabus endpoint without parameters (most comprehensive)
+        // This should return all courses with schoolForm field
+        try {
+          const syllabusResponse = await fetch('https://api.skolverket.se/syllabus/v1/syllabus');
+          if (syllabusResponse.ok) {
+            const syllabusData = await syllabusResponse.json();
+            if (Array.isArray(syllabusData) && syllabusData.length > 0) {
+              console.log('Successfully loaded from /syllabus endpoint, sample:', syllabusData[0]);
+              
+              syllabusData.forEach(item => {
+                const schoolForm = (item.schoolForm || '').toLowerCase();
+                const isGrundskola = schoolForm.includes('grundskola');
+                const isGymnasiet = schoolForm.includes('gymnasiet') || schoolForm.includes('gymnasium');
+                
+                // Identify from syllabusCode if schoolForm is missing
+                const syllabusCode = item.syllabusCode || '';
+                const isGrundskolaCode = syllabusCode.match(/^GR(G|S|SP|SA|GR|SAM|SPA|GRP|GRF)/i);
+                
+                if (isGrundskola || isGrundskolaCode) {
+                  let displayName = item.name || '';
+                  // Remove level suffixes for grundskola
+                  displayName = displayName.replace(/\s+\d+[a-z]?\b/i, '').trim();
+                  
+                  allSubjects.push({
+                    code: item.code || item.subjectCode || '',
+                    syllabusCode: syllabusCode,
+                    name: item.name || '',
+                    displayName: displayName,
+                    schoolForm: 'grundskola',
+                    level: item.level || ''
+                  });
+                } else if (isGymnasiet || (!isGrundskola && !isGrundskolaCode && syllabusCode.length > 3)) {
+                  // Gymnasiet - keep full name with level
+                  allSubjects.push({
+                    code: item.code || item.subjectCode || '',
+                    syllabusCode: syllabusCode,
+                    name: item.name || '',
+                    displayName: item.name || '',
+                    schoolForm: 'gymnasiet',
+                    level: item.level || ''
+                  });
+
+                }
+              });
+            }
+          } else {
+            console.debug('Syllabus endpoint returned:', syllabusResponse.status);
+          }
+        } catch (syllabusError) {
+          console.debug('Syllabus endpoint error:', syllabusError);
+        }
+
+        // Strategy 2: Try /subjects endpoint (if syllabus didn't give enough data)
+        if (allSubjects.length < 20) {
+          try {
+            const subjectsResponse = await fetch('https://api.skolverket.se/syllabus/v1/subjects');
+            if (subjectsResponse.ok) {
+              const subjectsData = await subjectsResponse.json();
+              if (Array.isArray(subjectsData)) {
+                const existingSubjects = new Set(allSubjects.map(s => s.syllabusCode || s.code));
+                
+                subjectsData.forEach(item => {
+                  const key = item.syllabusCode || item.code || '';
+                  if (existingSubjects.has(key)) return;
+                  
+                  const schoolForms = item.schoolForms || [];
+                  
+                  // Add for grundskola
+                  if (schoolForms.some(sf => sf.toLowerCase().includes('grund'))) {
+                    let displayName = item.name || '';
+                    displayName = displayName.replace(/\s+\d+[a-z]?\b/i, '').trim();
+                    
+                    allSubjects.push({
+                      code: item.code || '',
+                      syllabusCode: item.syllabusCode || '',
+                      name: item.name || '',
+                      displayName: displayName,
+                      schoolForm: 'grundskola',
+                      level: ''
+                    });
+                  }
+                  
+                  // Add for gymnasiet (but we need actual courses with levels from syllabus)
+                  // Subjects endpoint doesn't have course levels, so skip for gymnasiet
+                });
+              }
+            }
+          } catch (subjectsError) {
+            console.debug('Subjects endpoint failed:', subjectsError);
+          }
+        }
+
+        // Remove duplicates based on syllabusCode + schoolForm combination
+        const uniqueSubjects = [];
+        const seenKeys = new Set();
+        
+        allSubjects.forEach(subject => {
+          const key = `${subject.syllabusCode || subject.code}-${subject.schoolForm}`;
+          if (!seenKeys.has(key) && subject.displayName) {
+            seenKeys.add(key);
+            uniqueSubjects.push(subject);
+          }
+        });
+
+        if (uniqueSubjects.length === 0) {
+          // Comprehensive fallback list
+          const fallbackSubjects = [
+            // Grundskola - Comprehensive list
+            { code: 'MAT', name: 'Matematik', displayName: 'Matematik', schoolForm: 'grundskola', syllabusCode: 'GRGRMAT01' },
+            { code: 'SVE', name: 'Svenska', displayName: 'Svenska', schoolForm: 'grundskola', syllabusCode: 'GRGRSVE01' },
+            { code: 'ENG', name: 'Engelska', displayName: 'Engelska', schoolForm: 'grundskola', syllabusCode: 'GRGRENG01' },
+            { code: 'FYS', name: 'Fysik', displayName: 'Fysik', schoolForm: 'grundskola', syllabusCode: 'GRGRFYS01' },
+            { code: 'KEM', name: 'Kemi', displayName: 'Kemi', schoolForm: 'grundskola', syllabusCode: 'GRGRKEM01' },
+            { code: 'BIO', name: 'Biologi', displayName: 'Biologi', schoolForm: 'grundskola', syllabusCode: 'GRGRBIO01' },
+            { code: 'GEO', name: 'Geografi', displayName: 'Geografi', schoolForm: 'grundskola', syllabusCode: 'GRGRGEO01' },
+            { code: 'HIS', name: 'Historia', displayName: 'Historia', schoolForm: 'grundskola', syllabusCode: 'GRGRHIS01' },
+            { code: 'SO', name: 'Samhällskunskap', displayName: 'Samhällskunskap', schoolForm: 'grundskola', syllabusCode: 'GRGRSO01' },
+            { code: 'REL', name: 'Religionskunskap', displayName: 'Religionskunskap', schoolForm: 'grundskola', syllabusCode: 'GRGRREL01' },
+            { code: 'MUS', name: 'Musik', displayName: 'Musik', schoolForm: 'grundskola', syllabusCode: 'GRGRMUS01' },
+            { code: 'BIL', name: 'Bild', displayName: 'Bild', schoolForm: 'grundskola', syllabusCode: 'GRGRBIL01' },
+            { code: 'IDH', name: 'Idrott och hälsa', displayName: 'Idrott och hälsa', schoolForm: 'grundskola', syllabusCode: 'GRGRIDH01' },
+            { code: 'SLO', name: 'Slöjd', displayName: 'Slöjd', schoolForm: 'grundskola', syllabusCode: 'GRGRSLO01' },
+            { code: 'HEM', name: 'Hem- och konsumentkunskap', displayName: 'Hem- och konsumentkunskap', schoolForm: 'grundskola', syllabusCode: 'GRGRHEM01' },
+            { code: 'TEK', name: 'Teknik', displayName: 'Teknik', schoolForm: 'grundskola', syllabusCode: 'GRGRTEK01' },
+            // Gymnasiet - Comprehensive list with levels
+            { code: 'MAT', name: 'Matematik 1', displayName: 'Matematik 1', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01' },
+            { code: 'MAT', name: 'Matematik 1a', displayName: 'Matematik 1a', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01a' },
+            { code: 'MAT', name: 'Matematik 1b', displayName: 'Matematik 1b', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01b' },
+            { code: 'MAT', name: 'Matematik 1c', displayName: 'Matematik 1c', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT01c' },
+            { code: 'MAT', name: 'Matematik 2', displayName: 'Matematik 2', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02' },
+            { code: 'MAT', name: 'Matematik 2a', displayName: 'Matematik 2a', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02a' },
+            { code: 'MAT', name: 'Matematik 2b', displayName: 'Matematik 2b', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02b' },
+            { code: 'MAT', name: 'Matematik 2c', displayName: 'Matematik 2c', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT02c' },
+            { code: 'MAT', name: 'Matematik 3', displayName: 'Matematik 3', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT03' },
+            { code: 'MAT', name: 'Matematik 3b', displayName: 'Matematik 3b', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT03b' },
+            { code: 'MAT', name: 'Matematik 3c', displayName: 'Matematik 3c', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT03c' },
+            { code: 'MAT', name: 'Matematik 4', displayName: 'Matematik 4', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT04' },
+            { code: 'MAT', name: 'Matematik 5', displayName: 'Matematik 5', schoolForm: 'gymnasiet', syllabusCode: 'MATMAT05' },
+            { code: 'SVE', name: 'Svenska 1', displayName: 'Svenska 1', schoolForm: 'gymnasiet', syllabusCode: 'SVESVE01' },
+            { code: 'SVE', name: 'Svenska 2', displayName: 'Svenska 2', schoolForm: 'gymnasiet', syllabusCode: 'SVESVE02' },
+            { code: 'SVE', name: 'Svenska 3', displayName: 'Svenska 3', schoolForm: 'gymnasiet', syllabusCode: 'SVESVE03' },
+            { code: 'ENG', name: 'Engelska 5', displayName: 'Engelska 5', schoolForm: 'gymnasiet', syllabusCode: 'ENGENG05' },
+            { code: 'ENG', name: 'Engelska 6', displayName: 'Engelska 6', schoolForm: 'gymnasiet', syllabusCode: 'ENGENG06' },
+            { code: 'ENG', name: 'Engelska 7', displayName: 'Engelska 7', schoolForm: 'gymnasiet', syllabusCode: 'ENGENG07' },
+            { code: 'FYS', name: 'Fysik 1', displayName: 'Fysik 1', schoolForm: 'gymnasiet', syllabusCode: 'FYSFYS01' },
+            { code: 'FYS', name: 'Fysik 2', displayName: 'Fysik 2', schoolForm: 'gymnasiet', syllabusCode: 'FYSFYS02' },
+            { code: 'KEM', name: 'Kemi 1', displayName: 'Kemi 1', schoolForm: 'gymnasiet', syllabusCode: 'KEMKEM01' },
+            { code: 'KEM', name: 'Kemi 2', displayName: 'Kemi 2', schoolForm: 'gymnasiet', syllabusCode: 'KEMKEM02' },
+            { code: 'BIO', name: 'Biologi 1', displayName: 'Biologi 1', schoolForm: 'gymnasiet', syllabusCode: 'BIOBIO01' },
+            { code: 'BIO', name: 'Biologi 2', displayName: 'Biologi 2', schoolForm: 'gymnasiet', syllabusCode: 'BIOBIO02' },
+            { code: 'HIS', name: 'Historia 1a1', displayName: 'Historia 1a1', schoolForm: 'gymnasiet', syllabusCode: 'HISHIS01a1' },
+            { code: 'HIS', name: 'Historia 1a2', displayName: 'Historia 1a2', schoolForm: 'gymnasiet', syllabusCode: 'HISHIS01a2' },
+            { code: 'HIS', name: 'Historia 1b', displayName: 'Historia 1b', schoolForm: 'gymnasiet', syllabusCode: 'HISHIS01b' },
+            { code: 'GEO', name: 'Geografi 1', displayName: 'Geografi 1', schoolForm: 'gymnasiet', syllabusCode: 'GEOGEO01' },
+            { code: 'SO', name: 'Samhällskunskap 1b', displayName: 'Samhällskunskap 1b', schoolForm: 'gymnasiet', syllabusCode: 'SOSO01b' },
+            { code: 'SO', name: 'Samhällskunskap 2', displayName: 'Samhällskunskap 2', schoolForm: 'gymnasiet', syllabusCode: 'SOSO02' },
+            { code: 'REL', name: 'Religionskunskap', displayName: 'Religionskunskap', schoolForm: 'gymnasiet', syllabusCode: 'RELREL01' },
+            { code: 'PSY', name: 'Psykologi 1', displayName: 'Psykologi 1', schoolForm: 'gymnasiet', syllabusCode: 'PSYPSY01' },
+            { code: 'FIL', name: 'Filosofi', displayName: 'Filosofi', schoolForm: 'gymnasiet', syllabusCode: 'FILFIL01' },
+            { code: 'SPA', name: 'Spanska', displayName: 'Spanska', schoolForm: 'gymnasiet', syllabusCode: 'SPASPA01' },
+            { code: 'FRA', name: 'Franska', displayName: 'Franska', schoolForm: 'gymnasiet', syllabusCode: 'FRAFRA01' },
+            { code: 'TYS', name: 'Tyska', displayName: 'Tyska', schoolForm: 'gymnasiet', syllabusCode: 'TYSTYS01' },
+            { code: 'PROG', name: 'Programmering', displayName: 'Programmering', schoolForm: 'gymnasiet', syllabusCode: 'PROPROG01' },
+            { code: 'WEB', name: 'Webbutveckling', displayName: 'Webbutveckling', schoolForm: 'gymnasiet', syllabusCode: 'WEBWEB01' },
+            { code: 'DAOD', name: 'Datorteknik', displayName: 'Datorteknik', schoolForm: 'gymnasiet', syllabusCode: 'DAODAO01' }
+          ];
+          
+          uniqueSubjects.push(...fallbackSubjects);
+        }
+
+        subjects.value = uniqueSubjects.length > 0 ? uniqueSubjects : getFallbackSubjects();
+        filteredSubjects.value = subjects.value;
+        
+        console.log(`Loaded ${subjects.value.length} subjects (${subjects.value.filter(s => s.schoolForm === 'grundskola').length} grundskola, ${subjects.value.filter(s => s.schoolForm === 'gymnasiet').length} gymnasiet)`);
+      } catch (error) {
+        console.error('Error loading subjects:', error);
+        // Use comprehensive fallback
+        subjects.value = getFallbackSubjects();
+        filteredSubjects.value = subjects.value;
+      } finally {
+        isLoadingSubjects.value = false;
+      }
+    };
+
+    const filterSubjects = () => {
+      const query = subjectSearchQuery.value.toLowerCase().trim();
+      if (!query) {
+        filteredSubjects.value = subjects.value;
+        return;
+      }
+      
+      filteredSubjects.value = subjects.value.filter(subject =>
+        subject.displayName.toLowerCase().includes(query) ||
+        subject.name.toLowerCase().includes(query) ||
+        (subject.syllabusCode && subject.syllabusCode.toLowerCase().includes(query)) ||
+        (subject.code && subject.code.toLowerCase().includes(query))
+      );
+    };
+
+    const handleSubjectFocus = async () => {
+      if (subjects.value.length === 0) {
+        await loadSubjects();
+      }
+      showSubjectDropdown.value = true;
+      filterSubjects();
+    };
+
+    const handleSubjectBlur = () => {
+      // Delay closing to allow click on subject item
+      setTimeout(() => {
+        showSubjectDropdown.value = false;
+      }, 200);
+    };
+
+    const selectSubject = (subject) => {
+      newBlock.title = subject.displayName;
+      subjectSearchQuery.value = subject.displayName;
+      showSubjectDropdown.value = false;
+      filteredSubjects.value = subjects.value;
+    };
+
+    // Room dropdown functions
+    const filterRooms = () => {
+      if (!roomSearchQuery.value) {
+        filteredRoomsList.value = [...roomsList.value];
+        return;
+      }
+      const query = roomSearchQuery.value.toLowerCase().trim();
+      if (!query) {
+        filteredRoomsList.value = [...roomsList.value];
+        return;
+      }
+      filteredRoomsList.value = roomsList.value.filter(room =>
+        room.toLowerCase().includes(query)
+      );
+    };
+
+    const handleRoomFocus = () => {
+      if (!filteredRoomsList.value || filteredRoomsList.value.length === 0) {
+        filteredRoomsList.value = [...roomsList.value];
+      }
+      showRoomDropdown.value = true;
+      filterRooms();
+    };
+
+    const handleRoomBlur = () => {
+      // Delay closing to allow click events on room items
+      setTimeout(() => {
+        showRoomDropdown.value = false;
+      }, 200);
+    };
+
+    const selectRoom = (room) => {
+      newBlock.room = room;
+      roomSearchQuery.value = room;
+      showRoomDropdown.value = false;
+    };
+
+    // Teacher dropdown functions
+    const filterTeachers = () => {
+      if (!teacherSearchQuery.value) {
+        filteredTeachersList.value = [...teachersList.value];
+        return;
+      }
+      const query = teacherSearchQuery.value.toLowerCase().trim();
+      if (!query) {
+        filteredTeachersList.value = [...teachersList.value];
+        return;
+      }
+      filteredTeachersList.value = teachersList.value.filter(teacher =>
+        teacher.toLowerCase().includes(query)
+      );
+    };
+
+    const handleTeacherFocus = () => {
+      if (!filteredTeachersList.value || filteredTeachersList.value.length === 0) {
+        filteredTeachersList.value = [...teachersList.value];
+      }
+      showTeacherDropdown.value = true;
+      filterTeachers();
+    };
+
+    const handleTeacherBlur = () => {
+      // Delay closing to allow click events on teacher items
+      setTimeout(() => {
+        showTeacherDropdown.value = false;
+      }, 200);
+    };
+
+    const selectTeacher = (teacher) => {
+      newBlock.teacher = teacher;
+      teacherSearchQuery.value = teacher;
+      showTeacherDropdown.value = false;
     };
 
     let searchTimeout = null;
@@ -656,6 +1271,13 @@ export default defineComponent({
       }
     });
 
+    // Watch for school form changes and update filter
+    watch(selectedSchoolForm, () => {
+      if (subjects.value.length > 0) {
+        filterSubjects();
+      }
+    });
+
     return {
       errorMessage,
       newBlock,
@@ -666,6 +1288,13 @@ export default defineComponent({
       filteredSchedules,
       schedulesDropdownOpen,
       searchQuery,
+      subjects,
+      filteredSubjects,
+      filteredSubjectsBySchoolForm,
+      showSubjectDropdown,
+      subjectSearchQuery,
+      isLoadingSubjects,
+      selectedSchoolForm,
       editingBlockId,
       editingBlock,
       highlightedBlockId,
@@ -684,6 +1313,29 @@ export default defineComponent({
       selectSchedule,
       onScheduleChange,
       filterSchedules,
+      loadSubjects,
+      filterSubjects,
+      handleSubjectFocus,
+      handleSubjectBlur,
+      selectSubject,
+      // Room dropdown
+      roomsList,
+      filteredRoomsList,
+      showRoomDropdown,
+      roomSearchQuery,
+      filterRooms,
+      handleRoomFocus,
+      handleRoomBlur,
+      selectRoom,
+      // Teacher dropdown
+      teachersList,
+      filteredTeachersList,
+      showTeacherDropdown,
+      teacherSearchQuery,
+      filterTeachers,
+      handleTeacherFocus,
+      handleTeacherBlur,
+      selectTeacher,
       handleSearch,
       setBlockRef,
       selectCalendarDay,
@@ -766,6 +1418,130 @@ export default defineComponent({
   font-weight: 600;
   color: #374151;
   margin: 0 0 12px 0;
+}
+
+.school-form-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 4px;
+  background: #f3f4f6;
+  border-radius: 8px;
+}
+
+.school-form-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.school-form-btn:hover {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+}
+
+.school-form-btn.active {
+  background: #8b5cf6;
+  color: white;
+  box-shadow: 0 2px 4px rgba(139, 92, 246, 0.2);
+}
+
+.subject-dropdown-wrapper {
+  position: relative;
+}
+
+.subject-search-input {
+  position: relative;
+}
+
+.subject-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 1000;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.subject-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f3f4f6;
+  transition: background 0.2s ease;
+}
+
+.subject-item:last-child {
+  border-bottom: none;
+}
+
+.subject-item:hover {
+  background: #f9fafb;
+}
+
+.subject-name {
+  font-size: 14px;
+  color: #1a1a1a;
+  font-weight: 500;
+}
+
+.subject-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.subject-code {
+  font-size: 11px;
+  color: #6b7280;
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.subject-school-form {
+  font-size: 11px;
+  color: #8b5cf6;
+  background: #ede9fe;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.no-subjects,
+.loading-subjects {
+  padding: 12px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .form-group {
@@ -1160,4 +1936,5 @@ export default defineComponent({
   background: #e5e7eb;
 }
 </style>
+
 
