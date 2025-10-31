@@ -1,24 +1,21 @@
 <template>
-  <div>
-    <a href="#" @click.prevent="goToHome">Home Page</a>
-    <br><br>
-    <!-- <h1>Creator</h1>
-    <p>This is the creator page</p>
-    <input v-model="title" type="text" id="ScheduleTitle" placeholder="Schedule Title">
-    <input v-model="description" type="text" id="ScheduleDescription" placeholder="Schedule Description">
-    <button @click="createSchedule">Create</button>
-    <br><br> -->
-    <SimpleSchedule @change="onScheduleChange" />
+  <div class="creator-page">
+    <Sidebar />
+    <div class="creator-content">
+      <a href="#" @click.prevent="goToHome" class="home-link">Home Page</a>
+      <SimpleSchedule @change="onScheduleChange" />
+    </div>
   </div>
 </template>
 
 <script>
 import { defineComponent, ref } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
+import Sidebar from './Sidebar.vue';
 
 export default defineComponent({
   name: 'CreatorPage',
-  components: { SimpleSchedule },
+  components: { SimpleSchedule, Sidebar },
   setup() {
     const title = ref('');
     const description = ref('');
@@ -58,4 +55,29 @@ export default defineComponent({
   },
 });
 </script>
+
+<style scoped>
+.creator-page {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.creator-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.home-link {
+  display: inline-block;
+  margin-bottom: 16px;
+  color: #8b5cf6;
+  text-decoration: none;
+}
+
+.home-link:hover {
+  text-decoration: underline;
+}
+</style>
 

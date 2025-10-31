@@ -20,6 +20,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "dev:no-reload": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development DISABLE_HOT_RELOAD=true electron .\"",
     "build": "vite build",
     "test": "echo 'No tests yet' && exit 0"
   },
