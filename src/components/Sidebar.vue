@@ -29,6 +29,40 @@
       {{ errorMessage }}
     </div>
 
+    <!-- Month calendar -->
+    <div class="calendar-section">
+      <h3 class="section-title">Kalender</h3>
+      <div class="calendar">
+        <div class="calendar-header">
+          <div class="calendar-month">{{ currentMonthName }} {{ currentYear }}</div>
+        </div>
+        <div class="calendar-weekdays">
+          <div
+            v-for="day in weekdays"
+            :key="day"
+            class="calendar-weekday"
+          >
+            {{ day }}
+          </div>
+        </div>
+        <div class="calendar-days">
+          <div
+            v-for="(day, index) in calendarDays"
+            :key="index"
+            class="calendar-day"
+            :class="{
+              'other-month': day.otherMonth,
+              'today': day.isToday,
+              'selected': day.isSelected
+            }"
+            @click="selectCalendarDay(day)"
+          >
+            {{ day.day }}
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Block form -->
     <div class="block-form">
       <h3 class="section-title">Skapa block</h3>
@@ -177,40 +211,11 @@
         </div>
       </div>
     </div>
-
-    <!-- Month calendar -->
-    <div class="calendar-section">
-      <h3 class="section-title">Kalender</h3>
-      <div class="calendar">
-        <div class="calendar-header">
-          <div class="calendar-month">{{ currentMonthName }} {{ currentYear }}</div>
-        </div>
-        <div class="calendar-weekdays">
-          <div
-            v-for="day in weekdays"
-            :key="day"
-            class="calendar-weekday"
-          >
-            {{ day }}
-          </div>
-        </div>
-        <div class="calendar-days">
-          <div
-            v-for="(day, index) in calendarDays"
-            :key="index"
-            class="calendar-day"
-            :class="{ 'other-month': day.otherMonth }"
-          >
-            {{ day.day }}
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script>
-import { defineComponent, ref, reactive, computed, onMounted, watch, nextTick } from 'vue';
+import { defineComponent, ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 
 export default defineComponent({
   name: 'Sidebar',
@@ -242,6 +247,9 @@ export default defineComponent({
 
     // Calendar
     const currentDate = ref(new Date());
+    const selectedScheduleDay = ref(null); // Day name like 'Monday', 'Tuesday', etc.
+    const selectedCalendarDate = ref(null); // Date object for the selected day
+    
     const currentMonthName = computed(() => {
       const months = [
         'Januari', 'Februari', 'Mars', 'April', 'Maj', 'Juni',
@@ -251,6 +259,35 @@ export default defineComponent({
     });
     const currentYear = computed(() => currentDate.value.getFullYear());
     const weekdays = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
+
+    // Map day names to day of week index (Monday = 0, Tuesday = 1, etc.)
+    const dayNameToIndex = {
+      'Monday': 1,
+      'Tuesday': 2,
+      'Wednesday': 3,
+      'Thursday': 4,
+      'Friday': 5,
+      'Saturday': 6,
+      'Sunday': 0
+    };
+
+    // Get date for a given day name in current week
+    const getDateForDayName = (dayName) => {
+      const today = new Date();
+      const dayIndex = dayNameToIndex[dayName];
+      if (dayIndex === undefined) return null;
+      
+      const todayDay = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
+      const currentMonday = new Date(today);
+      const mondayOffset = todayDay === 0 ? -6 : 1 - todayDay;
+      currentMonday.setDate(today.getDate() + mondayOffset);
+      
+      const targetDate = new Date(currentMonday);
+      const offset = dayIndex === 0 ? 6 : dayIndex - 1; // Map Sunday (0) to 6
+      targetDate.setDate(currentMonday.getDate() + offset);
+      
+      return targetDate;
+    };
 
     const calendarDays = computed(() => {
       const year = currentDate.value.getFullYear();
@@ -270,13 +307,22 @@ export default defineComponent({
       const sundayOffset = lastDayOfWeek === 0 ? 0 : 7 - lastDayOfWeek;
       endDate.setDate(lastDay.getDate() + sundayOffset);
       
+      const today = new Date();
       const days = [];
       const current = new Date(startDate);
       
       while (current <= endDate) {
+        const dayDate = new Date(current);
+        const isToday = dayDate.toDateString() === today.toDateString();
+        const isSelected = selectedCalendarDate.value && 
+          dayDate.toDateString() === selectedCalendarDate.value.toDateString();
+        
         days.push({
           day: current.getDate(),
-          otherMonth: current.getMonth() !== month
+          otherMonth: current.getMonth() !== month,
+          isToday,
+          isSelected,
+          date: new Date(dayDate)
         });
         current.setDate(current.getDate() + 1);
       }
@@ -528,9 +574,66 @@ export default defineComponent({
       }
     };
 
+    // Select day from calendar and sync with SimpleSchedule
+    const selectCalendarDay = (dayInfo) => {
+      if (dayInfo.otherMonth) return; // Don't select days from other months
+      
+      selectedCalendarDate.value = dayInfo.date;
+      
+      // Map calendar date to day name
+      const dayIndex = dayInfo.date.getDay();
+      const dayNameMap = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayName = dayNameMap[dayIndex];
+      
+      // Only update if it's a weekday (Monday-Friday)
+      const weekdayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+      if (weekdayNames.includes(dayName)) {
+        selectedScheduleDay.value = dayName;
+        // Emit event to SimpleSchedule to select this day
+        window.dispatchEvent(new CustomEvent('schedule-select-day', { 
+          detail: { day: dayName } 
+        }));
+      }
+    };
+
+    // Listen for day selection from SimpleSchedule
+    const handleScheduleDaySelect = (event) => {
+      const dayName = event.detail?.day;
+      if (dayName && dayName !== selectedScheduleDay.value) {
+        selectedScheduleDay.value = dayName;
+        const dateForDay = getDateForDayName(dayName);
+        if (dateForDay) {
+          selectedCalendarDate.value = dateForDay;
+          // If the selected day is in a different month, update currentDate
+          if (dateForDay.getMonth() !== currentDate.value.getMonth()) {
+            currentDate.value = new Date(dateForDay);
+          }
+        }
+      }
+    };
+
     // Lifecycle
     onMounted(async () => {
       await loadSchedules();
+      
+      // Listen for day selection events from SimpleSchedule
+      window.addEventListener('schedule-day-selected', handleScheduleDaySelect);
+      
+      // Initial sync - if SimpleSchedule has a default day, update calendar
+      // This will be handled when SimpleSchedule emits its initial selection
+      setTimeout(() => {
+        // Trigger initial sync by emitting default day if needed
+        const defaultDay = 'Monday'; // SimpleSchedule default
+        const dateForDay = getDateForDayName(defaultDay);
+        if (dateForDay) {
+          selectedScheduleDay.value = defaultDay;
+          selectedCalendarDate.value = dateForDay;
+        }
+      }, 100);
+    });
+
+    onUnmounted(() => {
+      window.removeEventListener('schedule-day-selected', handleScheduleDaySelect);
     });
 
     watch(activeSchemaId, (newId) => {
@@ -565,7 +668,8 @@ export default defineComponent({
       onScheduleChange,
       filterSchedules,
       handleSearch,
-      setBlockRef
+      setBlockRef,
+      selectCalendarDay
     };
   },
 });
@@ -912,14 +1016,36 @@ export default defineComponent({
   font-size: 12px;
   color: #1a1a1a;
   border-radius: 4px;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, border 0.2s ease;
+  cursor: pointer;
+  border: 2px solid transparent;
 }
 
 .calendar-day.other-month {
   color: #d1d5db;
+  cursor: default;
 }
 
-.calendar-day:hover:not(.other-month) {
+.calendar-day.today {
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
+  border-color: #ef4444;
+}
+
+.calendar-day.selected {
+  background: #8b5cf6;
+  color: white;
+  font-weight: 600;
+  border-color: #7c3aed;
+}
+
+.calendar-day.selected.today {
+  background: #7c3aed;
+  border-color: #6d28d9;
+}
+
+.calendar-day:hover:not(.other-month):not(.selected) {
   background: #e5e7eb;
 }
 </style>
