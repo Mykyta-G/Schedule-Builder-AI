@@ -2,12 +2,12 @@
   <div>
     <a href="#" @click.prevent="goToHome">Home Page</a>
     <br><br>
-    <h1>Creator</h1>
+    <!-- <h1>Creator</h1>
     <p>This is the creator page</p>
     <input v-model="title" type="text" id="ScheduleTitle" placeholder="Schedule Title">
     <input v-model="description" type="text" id="ScheduleDescription" placeholder="Schedule Description">
     <button @click="createSchedule">Create</button>
-    <br><br>
+    <br><br> -->
     <SimpleSchedule @change="onScheduleChange" />
   </div>
 </template>
