@@ -48,17 +48,16 @@
 
     <!-- Schedule content -->
     <div class="schedule-container">
-      <div class="schedule-scroll">
-        <div class="schedule-content">
-          <!-- Time markers column -->
-          <div class="time-markers">
-            <div v-for="hour in fullDayHours" :key="hour" class="time-marker">
-              {{ formatHourDisplay(hour) }}
-            </div>
+      <div class="schedule-content">
+        <!-- Time markers column -->
+        <div class="time-markers" :style="{ height: gridHeightPx }">
+          <div v-for="hour in fullDayHours" :key="hour" class="time-marker">
+            {{ formatHourDisplay(hour) }}
           </div>
+        </div>
 
-          <!-- Schedule grid - single column for day, multiple for week -->
-          <div class="schedule-grid" :class="{ 'week-view': viewMode === 'week' }">
+        <!-- Schedule grid - single column for day, multiple for week -->
+        <div class="schedule-grid" :class="{ 'week-view': viewMode === 'week' }" :style="{ height: gridHeightPx }">
             <!-- Grid lines -->
             <div class="grid-lines">
               <div v-for="hour in fullDayHours" :key="hour" class="grid-line" 
@@ -149,7 +148,6 @@
         </div>
       </div>
     </div>
-  </div>
 </template>
 
 <script>
@@ -165,15 +163,10 @@ export default defineComponent({
     const expandedItem = ref(null);
 
     // Timeline config
-    const startHour = 8;
-    const endHour = 18;
+    const startHour = 8; // default start
+    const endHour = 17; // default end
     const pixelsPerHour = 60;
     const pixelsPerMinute = pixelsPerHour / 60;
-    const fullDayHours = computed(() => {
-      const result = [];
-      for (let h = startHour; h <= endHour; h++) result.push(h);
-      return result;
-    });
 
     // Display days based on view mode
     const displayDays = computed(() => {
@@ -183,6 +176,29 @@ export default defineComponent({
     // Schedules per day
     const schedules = reactive({});
     for (const d of days.value) schedules[d] = [];
+
+    // Determine dynamic end hour based on items so grid expands instead of scrolling
+    const maxEndMinutes = computed(() => {
+      let max = endHour * 60;
+      const visibleDays = displayDays.value;
+      for (const d of visibleDays) {
+        for (const it of schedules[d]) {
+          const e = (it.startMinutes || 0) + (it.duration || 0);
+          if (!Number.isNaN(e)) max = Math.max(max, e);
+        }
+      }
+      return max;
+    });
+
+    const dynamicEndHour = computed(() => Math.max(endHour, Math.ceil(maxEndMinutes.value / 60)));
+
+    const fullDayHours = computed(() => {
+      const result = [];
+      for (let h = startHour; h <= dynamicEndHour.value; h++) result.push(h);
+      return result;
+    });
+
+    const gridHeightPx = computed(() => `${(dynamicEndHour.value - startHour) * pixelsPerHour}px`);
 
     // Color palette for items (matching the design)
     const colors = [
@@ -232,7 +248,7 @@ export default defineComponent({
       item.duration = Math.max(15, Math.round(item.duration / 5) * 5);
       item.startMinutes = Math.round(item.startMinutes / 5) * 5;
       const minStart = startHour * 60;
-      const maxStart = endHour * 60 - item.duration;
+      const maxStart = dynamicEndHour.value * 60 - item.duration;
       item.startMinutes = clamp(item.startMinutes, minStart, maxStart);
       emitChange();
     };
@@ -315,9 +331,7 @@ export default defineComponent({
 
     const selectDay = (day) => { 
       selectedDay.value = day;
-      if (viewMode.value === 'day') {
-        // Stay in day view
-      }
+      viewMode.value = 'day';
     };
 
     // Drag and drop
@@ -356,7 +370,7 @@ export default defineComponent({
       isDragging.value = true;
       dragStartY.value = offsetY;
       
-      const scheduleEl = document.querySelector('.schedule-scroll');
+      const scheduleEl = document.querySelector('.schedule-content');
       if (scheduleEl) {
         const itemTop = (item.startMinutes - startHour * 60) * pixelsPerMinute;
         placeholderStyle.top = `${itemTop}px`;
@@ -372,11 +386,11 @@ export default defineComponent({
         isDragging.value = true;
       }
       
-      const scheduleEl = document.querySelector('.schedule-scroll');
+      const scheduleEl = document.querySelector('.schedule-content');
       if (!scheduleEl) return;
       
       const rect = evt.currentTarget.getBoundingClientRect();
-      const y = evt.clientY - rect.top + scheduleEl.scrollTop;
+      const y = evt.clientY - rect.top;
       
       let snapY;
       if (dragStartY.value > 0) {
@@ -387,7 +401,7 @@ export default defineComponent({
       }
       
       const newStartMinutes = startHour * 60 + (snapY / pixelsPerMinute);
-      const maxStart = endHour * 60 - (draggedItem.value?.duration || 60);
+      const maxStart = dynamicEndHour.value * 60 - (draggedItem.value?.duration || 60);
       const clampedMinutes = Math.min(Math.max(startHour * 60, newStartMinutes), maxStart);
       
       placeholderStyle.top = `${(clampedMinutes - startHour * 60) * pixelsPerMinute}px`;
@@ -413,7 +427,7 @@ export default defineComponent({
         
         // Add to target day
         const item = schedules[day].find(item => item.id === itemData.id) || itemData;
-        const maxTop = (endHour * 60) - item.duration;
+        const maxTop = (dynamicEndHour.value * 60) - item.duration;
         item.startMinutes = Math.min(Math.max(startHour * 60, newStartMinutes), maxTop);
         normalizeItem(item);
         
@@ -578,14 +592,16 @@ export default defineComponent({
 
 <style scoped>
 .schedule-wrapper {
+  height: 100%;
   overflow: hidden;
-  padding: 1rem;
-  margin-top: -1.5rem;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
 }
 
 .schedule-header {
-  padding: 24px 32px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 3vh 4vh;
+  border-bottom: 0.1vh solid #f0f0f0;
   background: #fff;
 }
 
@@ -600,38 +616,38 @@ export default defineComponent({
 }
 
 .schedule-title {
-  margin: 0 0 4px 0;
-  font-size: 28px;
+  margin: 0 0 0.5vh 0;
+  font-size: 3.5vh;
   font-weight: 700;
   color: #1a1a1a;
 }
 
 .schedule-subtitle {
   margin: 0;
-  font-size: 14px;
+  font-size: 1.75vh;
   color: #6b7280;
 }
 
 .header-actions {
   display: flex;
-  gap: 16px;
+  gap: 2vh;
   align-items: center;
 }
 
 .view-toggle {
   display: flex;
   background: #f3f4f6;
-  border-radius: 8px;
-  padding: 4px;
-  gap: 4px;
+  border-radius: 1vh;
+  padding: 0.5vh;
+  gap: 0.5vh;
 }
 
 .view-btn {
-  padding: 8px 16px;
+  padding: 1vh 2vh;
   border: none;
   background: transparent;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: 0.8vh;
+  font-size: 1.75vh;
   font-weight: 500;
   color: #6b7280;
   cursor: pointer;
@@ -645,47 +661,47 @@ export default defineComponent({
 .view-btn.active {
   background: #fff;
   color: #1a1a1a;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 0.1vh 0.25vh rgba(0, 0, 0, 0.05);
 }
 
 .add-item-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
+  gap: 1vh;
+  padding: 1.25vh 2.5vh;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: 1vh;
+  font-size: 1.75vh;
   font-weight: 600;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .add-item-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  transform: translateY(-0.1vh);
+  box-shadow: 0 0.5vh 1.5vh rgba(102, 126, 234, 0.4);
 }
 
 .btn-icon {
-  font-size: 18px;
+  font-size: 2.25vh;
   font-weight: 300;
 }
 
 .days-header {
   display: flex;
   background: #fff;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 0.1vh solid #f0f0f0;
 }
 
 .day-header {
   flex: 1;
-  padding: 16px;
+  padding: 2vh;
   text-align: center;
   cursor: pointer;
   transition: background-color 0.2s ease;
-  border-right: 1px solid #f0f0f0;
+  border-right: 0.1vh solid #f0f0f0;
 }
 
 .day-header:last-child {
@@ -707,17 +723,17 @@ export default defineComponent({
   bottom: 0;
   left: 0;
   right: 0;
-  height: 2px;
+  height: 0.25vh;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
 .day-name {
-  font-size: 12px;
+  font-size: 1.5vh;
   font-weight: 600;
   color: #6b7280;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  letter-spacing: 0.0625rem;
+  margin-bottom: 0.5vh;
 }
 
 .day-header.selected .day-name {
@@ -725,76 +741,76 @@ export default defineComponent({
 }
 
 .day-date {
-  font-size: 20px;
+  font-size: 2.5vh;
   font-weight: 600;
   color: #1a1a1a;
 }
 
 .schedule-container {
-  height: 600px;
-  overflow: hidden;
-}
-
-.schedule-scroll {
-  height: 100%;
+  flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  min-height: 0;
 }
 
-.schedule-scroll::-webkit-scrollbar {
-  width: 8px;
+.schedule-container::-webkit-scrollbar {
+  width: 1vh;
 }
 
-.schedule-scroll::-webkit-scrollbar-track {
+.schedule-container::-webkit-scrollbar-track {
   background: #f9fafb;
 }
 
-.schedule-scroll::-webkit-scrollbar-thumb {
+.schedule-container::-webkit-scrollbar-thumb {
   background: #d1d5db;
-  border-radius: 4px;
+  border-radius: 0.5vh;
 }
 
-.schedule-scroll::-webkit-scrollbar-thumb:hover {
+.schedule-container::-webkit-scrollbar-thumb:hover {
   background: #9ca3af;
 }
 
 .schedule-content {
   position: relative;
-  min-height: 600px;
+  width: 100%;
+  min-height: 100%;
   display: flex;
 }
 
 .time-markers {
-  width: 80px;
+  width: 10vh;
   flex-shrink: 0;
   background: #fff;
-  border-right: 1px solid #f0f0f0;
+  border-right: 0.1vh solid #f0f0f0;
   position: sticky;
   left: 0;
+  align-self: flex-start;
   z-index: 10;
+  overflow: visible;
 }
 
 .time-marker {
   height: 60px;
-  padding-right: 16px;
+  padding-right: 2vh;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  font-size: 12px;
+  font-size: 1.5vh;
   color: #9ca3af;
   font-weight: 500;
-  border-top: 1px solid #f3f4f6;
+  border-top: 0.1vh solid #f3f4f6;
 }
 
 .schedule-grid {
   flex: 1;
   position: relative;
   display: flex;
+  overflow: visible;
 }
 
 .schedule-grid.week-view .day-column {
   flex: 1;
-  border-right: 1px solid #f0f0f0;
+  border-right: 0.1vh solid #f0f0f0;
   position: relative;
 }
 
@@ -820,54 +836,55 @@ export default defineComponent({
   position: absolute;
   left: 0;
   right: 0;
-  height: 1px;
+  height: 0.1vh;
   background-color: #f3f4f6;
 }
 
 .scheduled-item {
   position: absolute;
-  left: 8px;
-  right: 8px;
-  margin: 2px 0;
+  left: 1vh;
+  right: 1vh;
+  margin: 0.25vh 0;
   background: rgba(139, 92, 246, 0.1);
-  border-left: 3px solid #8b5cf6;
-  border-radius: 8px;
-  padding: 10px 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border-left: 0.4vh solid #8b5cf6;
+  border-radius: 1vh;
+  padding: 1.25vh 1.5vh;
+  box-shadow: 0 0.1vh 0.4vh rgba(0, 0, 0, 0.1);
   cursor: move;
   transition: box-shadow 0.2s ease, transform 0.2s ease;
   z-index: 5;
-  min-height: 40px;
+  min-height: 5vh;
+  max-width: calc(100% - 2vh);
 }
 
 .scheduled-item:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  transform: translateY(-1px);
+  box-shadow: 0 0.5vh 1.5vh rgba(0, 0, 0, 0.15);
+  transform: translateY(-0.1vh);
 }
 
 .scheduled-item-content {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 1vh;
 }
 
 .item-time {
-  font-size: 11px;
+  font-size: 1.4vh;
   font-weight: 600;
   color: #6b7280;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.0375rem;
 }
 
 .item-name-input {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 14px;
+  font-size: 1.75vh;
   font-weight: 600;
   color: #1a1a1a;
-  padding: 4px 0;
+  padding: 0.5vh 0;
   outline: none;
   min-width: 0;
 }
@@ -880,51 +897,55 @@ export default defineComponent({
 .item-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  gap: 1vh;
+  padding-top: 1vh;
+  border-top: 0.1vh solid rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 6;
 }
 
 .time-controls {
   display: flex;
-  gap: 8px;
+  gap: 1vh;
 }
 
 .time-controls label {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
+  gap: 0.5vh;
+  font-size: 1.4vh;
   color: #6b7280;
   font-weight: 500;
 }
 
 .time-controls input[type="time"] {
-  padding: 6px 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  font-size: 12px;
+  padding: 0.75vh 1vh;
+  border: 0.1vh solid #e5e7eb;
+  border-radius: 0.75vh;
+  font-size: 1.5vh;
   background: #fff;
 }
 
 .expand-btn {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  background: rgba(255, 255, 255, 0.8);
+  top: 1vh;
+  right: 1vh;
+  background: rgba(255, 255, 255, 0.95);
   border: none;
-  border-radius: 4px;
-  width: 24px;
-  height: 24px;
+  border-radius: 0.5vh;
+  width: 3vh;
+  height: 3vh;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 2vh;
   color: #6b7280;
   opacity: 0;
   transition: opacity 0.2s ease;
+  z-index: 10;
+  box-shadow: 0 0.2vh 0.5vh rgba(0, 0, 0, 0.1);
 }
 
 .scheduled-item:hover .expand-btn {
@@ -932,12 +953,12 @@ export default defineComponent({
 }
 
 .delete-btn {
-  padding: 6px 12px;
+  padding: 0.75vh 1.5vh;
   background: #ef4444;
   color: white;
   border: none;
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: 0.75vh;
+  font-size: 1.5vh;
   font-weight: 500;
   cursor: pointer;
   transition: background 0.2s ease;
@@ -951,7 +972,7 @@ export default defineComponent({
   position: absolute;
   left: 0;
   right: 0;
-  height: 6px;
+  height: 0.75vh;
   cursor: ns-resize;
   z-index: 10;
 }
@@ -962,21 +983,21 @@ export default defineComponent({
 
 .resize-handle.top {
   top: 0;
-  border-radius: 8px 8px 0 0;
+  border-radius: 1vh 1vh 0 0;
 }
 
 .resize-handle.bottom {
   bottom: 0;
-  border-radius: 0 0 8px 8px;
+  border-radius: 0 0 1vh 1vh;
 }
 
 .drag-placeholder {
   position: absolute;
-  left: 8px;
-  right: 8px;
+  left: 1vh;
+  right: 1vh;
   background: rgba(139, 92, 246, 0.15);
-  border: 2px dashed #8b5cf6;
-  border-radius: 8px;
+  border: 0.25vh dashed #8b5cf6;
+  border-radius: 1vh;
   pointer-events: none;
   z-index: 1000;
   opacity: 0;
@@ -990,7 +1011,7 @@ export default defineComponent({
 @media (max-width: 768px) {
   .header-content {
     flex-direction: column;
-    gap: 16px;
+    gap: 2vh;
     align-items: flex-start;
   }
   
