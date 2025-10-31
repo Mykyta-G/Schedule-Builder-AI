@@ -34,11 +34,14 @@
 
     <!-- Days header - shows all days for week view, single day for day view -->
     <div class="days-header">
+      <div class="days-spacer"></div>
       <div 
         v-for="day in displayDays" 
         :key="day" 
         class="day-header" 
-        :class="{ selected: viewMode === 'day' || (viewMode === 'week' && selectedDay === day) }"
+        :class="{ selected: viewMode === 'day' ? selectedDay === day : hoverDay === day }"
+        @mouseenter="hoverDay = day"
+        @mouseleave="hoverDay = null"
         @click="selectDay(day)"
       >
         <div class="day-name">{{ getShortDayName(day) }}</div>
@@ -70,6 +73,9 @@
               v-for="day in displayDays" 
               :key="day" 
               class="day-column"
+              :class="{ hovered: hoverDay === day }"
+              @mouseenter="hoverDay = day"
+              @mouseleave="hoverDay = null"
               @dragover.prevent="handleDragOver($event, day)"
               @drop="onDrop($event, day)"
             >
@@ -161,6 +167,7 @@ export default defineComponent({
     const selectedDay = ref('Monday');
     const viewMode = ref('week'); // 'day' or 'week'
     const expandedItem = ref(null);
+    const hoverDay = ref(null);
 
     // Timeline config
     const startHour = 8; // default start
@@ -556,6 +563,7 @@ export default defineComponent({
       days,
       selectedDay,
       viewMode,
+      hoverDay,
       displayDays,
       schedules,
       expandedItem,
@@ -695,6 +703,13 @@ export default defineComponent({
   border-bottom: 0.1vh solid #f0f0f0;
 }
 
+.days-spacer {
+  width: 10vh; /* match .time-markers width */
+  flex-shrink: 0;
+  border-right: 0.1vh solid #f0f0f0;
+  background: #fff;
+}
+
 .day-header {
   flex: 1;
   padding: 2vh;
@@ -812,6 +827,10 @@ export default defineComponent({
   flex: 1;
   border-right: 0.1vh solid #f0f0f0;
   position: relative;
+}
+
+.schedule-grid.week-view .day-column.hovered {
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .schedule-grid:not(.week-view) .day-column {
