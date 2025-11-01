@@ -19,19 +19,32 @@
       <div class="chat-section" :class="{ 'open': isChatOpen }">
         <ChatWindow />
       </div>
+      <SettingsModule :is-open="isSettingsOpen" @close="closeSettings" />
+      <ProfileModule :is-open="isProfileOpen" @close="closeProfile" />
+      <VariablesModule :is-open="isVariablesOpen" @close="closeVariables" />
     </div>
   </div>
 </template>
 
 <script>
-import { defineComponent, ref } from 'vue';
+import { defineComponent, ref, onMounted, onUnmounted } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
 import Sidebar from './Sidebar.vue';
+import SettingsModule from './SettingsModule.vue';
+import ProfileModule from './ProfileModule.vue';
+import VariablesModule from './VariablesModule.vue';
 
 export default defineComponent({
   name: 'CreatorPage',
-  components: { SimpleSchedule, ChatWindow, Sidebar },
+  components: { 
+    SimpleSchedule, 
+    ChatWindow, 
+    Sidebar,
+    SettingsModule,
+    ProfileModule,
+    VariablesModule,
+  },
   props: {
     presetId: {
       type: String,
@@ -43,6 +56,9 @@ export default defineComponent({
     const description = ref('');
     const schedule = ref({});
     const isChatOpen = ref(false);
+    const isSettingsOpen = ref(false);
+    const isProfileOpen = ref(false);
+    const isVariablesOpen = ref(false);
 
     const goToHome = () => {
       window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'preset-selection' } }));
@@ -50,6 +66,120 @@ export default defineComponent({
 
     const toggleChat = () => {
       isChatOpen.value = !isChatOpen.value;
+    };
+
+    const handleOpenModule = (moduleName) => {
+      console.log(`[CreatorPage] Opening module: ${moduleName}`, {
+        timestamp: new Date().toISOString(),
+        previousState: {
+          isSettingsOpen: isSettingsOpen.value,
+          isProfileOpen: isProfileOpen.value,
+          isVariablesOpen: isVariablesOpen.value
+        }
+      });
+      try {
+        if (moduleName === 'settings') {
+          isSettingsOpen.value = true;
+          console.log('[CreatorPage] Settings module opened');
+        } else if (moduleName === 'profile') {
+          isProfileOpen.value = true;
+          console.log('[CreatorPage] Profile module opened');
+        } else if (moduleName === 'variables') {
+          isVariablesOpen.value = true;
+          console.log('[CreatorPage] Variables module opened');
+        } else {
+          console.warn(`[CreatorPage] Unknown module name: ${moduleName}`);
+          throw new Error(`Unknown module: ${moduleName}`);
+        }
+      } catch (error) {
+        console.error(`[CreatorPage] Failed to open module ${moduleName}:`, error);
+        console.error('[CreatorPage] Error context:', {
+          module: moduleName,
+          error: error.message,
+          stack: error.stack
+        });
+      }
+    };
+
+    const closeSettings = () => {
+      console.log('[CreatorPage] Closing settings module...', {
+        timestamp: new Date().toISOString()
+      });
+      isSettingsOpen.value = false;
+    };
+
+    const closeProfile = () => {
+      console.log('[CreatorPage] Closing profile module...', {
+        timestamp: new Date().toISOString()
+      });
+      isProfileOpen.value = false;
+    };
+
+    const closeVariables = () => {
+      console.log('[CreatorPage] Closing variables module...', {
+        timestamp: new Date().toISOString()
+      });
+      isVariablesOpen.value = false;
+    };
+
+    const setupEventListeners = () => {
+      console.log('[CreatorPage] Setting up module event listeners...', {
+        timestamp: new Date().toISOString()
+      });
+
+      try {
+        const moduleOpenHandler = (event) => {
+          console.log('[CreatorPage] Received module-open event:', {
+            module: event.detail?.module,
+            detail: event.detail,
+            timestamp: new Date().toISOString()
+          });
+
+          try {
+            if (!event.detail || !event.detail.module) {
+              console.warn('[CreatorPage] Invalid module-open event: missing module name', event.detail);
+              return;
+            }
+            handleOpenModule(event.detail.module);
+          } catch (error) {
+            console.error('[CreatorPage] Error handling module-open event:', {
+              error: error.message,
+              module: event.detail?.module,
+              stack: error.stack
+            });
+          }
+        };
+
+        window.addEventListener('module-open', moduleOpenHandler);
+        console.log('[CreatorPage] Event listeners setup complete');
+
+        return moduleOpenHandler;
+      } catch (error) {
+        console.error('[CreatorPage] Failed to setup event listeners:', {
+          error: error.message,
+          stack: error.stack
+        });
+        throw error;
+      }
+    };
+
+    const cleanupEventListeners = (handler) => {
+      console.log('[CreatorPage] Cleaning up event listeners...', {
+        timestamp: new Date().toISOString()
+      });
+      try {
+        if (handler) {
+          window.removeEventListener('module-open', handler);
+          console.log('[CreatorPage] Event listeners cleaned up successfully');
+        } else {
+          console.warn('[CreatorPage] No handler provided for cleanup');
+        }
+      } catch (error) {
+        console.error('[CreatorPage] Error during cleanup:', {
+          error: error.message,
+          stack: error.stack
+        });
+      }
     };
 
     const createSchedule = async () => {
@@ -72,6 +202,31 @@ export default defineComponent({
       schedule.value = payload;
     };
 
+    let eventHandler = null;
+
+    onMounted(() => {
+      console.log('[CreatorPage] Component mounting...', {
+        timestamp: new Date().toISOString()
+      });
+      try {
+        eventHandler = setupEventListeners();
+        console.log('[CreatorPage] Component mounted successfully');
+      } catch (error) {
+        console.error('[CreatorPage] Mount failed:', error);
+        console.error('[CreatorPage] Stack trace:', error.stack);
+      }
+    });
+
+    onUnmounted(() => {
+      console.log('[CreatorPage] Component unmounting...');
+      try {
+        cleanupEventListeners(eventHandler);
+        console.log('[CreatorPage] Component unmounted successfully');
+      } catch (error) {
+        console.error('[CreatorPage] Unmount cleanup error:', error);
+      }
+    });
+
     return {
       title,
       description,
@@ -80,6 +235,12 @@ export default defineComponent({
       onScheduleChange,
       isChatOpen,
       toggleChat,
+      isSettingsOpen,
+      isProfileOpen,
+      isVariablesOpen,
+      closeSettings,
+      closeProfile,
+      closeVariables,
     };
   },
 });

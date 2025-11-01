@@ -499,7 +499,30 @@ export default defineComponent({
 
     // Methods
     const navigateTo = (page) => {
-      window.dispatchEvent(new CustomEvent('navigate', { detail: { page } }));
+      console.log('[Sidebar] navigateTo called', {
+        page,
+        timestamp: new Date().toISOString()
+      });
+      try {
+        // Check if this is a module (not a page)
+        const modulePages = ['settings', 'profile', 'variables'];
+        if (modulePages.includes(page)) {
+          console.log(`[Sidebar] Dispatching module-open event for: ${page}`);
+          window.dispatchEvent(new CustomEvent('module-open', { 
+            detail: { module: page } 
+          }));
+        } else {
+          // Regular page navigation
+          console.log(`[Sidebar] Dispatching navigate event for page: ${page}`);
+          window.dispatchEvent(new CustomEvent('navigate', { detail: { page } }));
+        }
+      } catch (error) {
+        console.error('[Sidebar] Error in navigateTo:', {
+          error: error.message,
+          page,
+          stack: error.stack
+        });
+      }
     };
 
     const showError = (message) => {
