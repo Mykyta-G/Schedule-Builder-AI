@@ -1,0 +1,16 @@
+{
+  "id": "schema-1761925907401",
+  "name": "schema-1761925907401",
+  "createdAt": "2025-10-31T15:51:47.406Z",
+  "updatedAt": "2025-10-31T15:51:59.494Z",
+  "blocks": [
+    {
+      "id": "block-1761925907401-f2z8up539",
+      "title": "Matematik 1",
+      "room": "A10",
+      "teacher": "Andersson",
+      "createdAt": "2025-10-31T15:51:47.402Z",
+      "updatedAt": "2025-10-31T15:51:59.492Z"
+    }
+  ]
+}

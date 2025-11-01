@@ -339,6 +339,21 @@ export default defineComponent({
     const selectDay = (day) => { 
       selectedDay.value = day;
       viewMode.value = 'day';
+      if (viewMode.value === 'day') {
+        // Stay in day view
+      }
+      // Emit event for Sidebar calendar sync
+      window.dispatchEvent(new CustomEvent('schedule-day-selected', { 
+        detail: { day } 
+      }));
+    };
+
+    // Listen for day selection from Sidebar calendar
+    const handleCalendarDaySelect = (event) => {
+      const dayName = event.detail?.day;
+      if (dayName && days.value.includes(dayName)) {
+        selectedDay.value = dayName;
+      }
     };
 
     // Drag and drop
@@ -530,17 +545,26 @@ export default defineComponent({
     onMounted(() => {
       window.addEventListener('mousemove', handleResize);
       window.addEventListener('mouseup', stopResize);
+      // Listen for day selection from Sidebar calendar
+      window.addEventListener('schedule-select-day', handleCalendarDaySelect);
       // Close expanded item when clicking outside
       document.addEventListener('click', (e) => {
         if (!e.target.closest('.scheduled-item')) {
           expandedItem.value = null;
         }
       });
+      // Emit initial selected day to sync with Sidebar calendar
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('schedule-day-selected', { 
+          detail: { day: selectedDay.value } 
+        }));
+      }, 50);
     });
 
     onUnmounted(() => {
       window.removeEventListener('mousemove', handleResize);
       window.removeEventListener('mouseup', stopResize);
+      window.removeEventListener('schedule-select-day', handleCalendarDaySelect);
     });
 
     const emitChange = () => {

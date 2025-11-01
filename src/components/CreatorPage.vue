@@ -18,6 +18,10 @@
       <div class="chat-section" :class="{ 'open': isChatOpen }">
         <ChatWindow />
       </div>
+    <Sidebar />
+    <div class="creator-content">
+      <a href="#" @click.prevent="goToHome" class="home-link">Home Page</a>
+      <SimpleSchedule @change="onScheduleChange" />
     </div>
   </div>
 </template>
@@ -29,7 +33,9 @@ import ChatWindow from './ChatWindow.vue';
 
 export default defineComponent({
   name: 'CreatorPage',
-  components: { SimpleSchedule, ChatWindow },
+  components: { SimpleSchedule, ChatWindow, Sidebar},
+
+import Sidebar from './Sidebar.vue';
   setup() {
     const title = ref('');
     const description = ref('');
@@ -185,6 +191,26 @@ export default defineComponent({
 
 .chat-section:not(.open) {
   transform: translateX(100%);
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.creator-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.home-link {
+  display: inline-block;
+  margin-bottom: 16px;
+  color: #8b5cf6;
+  text-decoration: none;
+}
+
+.home-link:hover {
+  text-decoration: underline;
 }
 </style>
 
