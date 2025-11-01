@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 const isDev = process.env.NODE_ENV !== 'production';
 
 // Enable hot reload for development (optional - can be disabled if causing issues)
@@ -69,6 +72,9 @@ ipcMain.handle('chat', async (event, { apiKey, messages }) => {
   } catch (error) {
     console.error('Chat error:', error);
     return { error: error.message || 'Failed to connect to OpenAI API' };
+  }
+});
+
 // List all schedule files (JSON files in Schedules folder)
 ipcMain.handle('list-schedules', () => {
   const scheduleDir = path.join(__dirname, 'Schedules');
@@ -150,6 +156,17 @@ ipcMain.handle('save-schedule', (_, schedule) => {
   }
 });
 
+// Get Supabase configuration
+ipcMain.handle('get-supabase-config', () => {
+  // Support both naming conventions for compatibility
+  return {
+    url: process.env.ELECTRON_APP_SUPABASE_URL || '',
+    anonKey: process.env.ELECTRON_APP_SUPABASE_ANON_KEY || 
+             process.env.ELECTRON_APP_ANON_KEY || // Support shorter name for backwards compatibility
+             ''
+  };
+});
+
 const createWindow = () => {
   const win = new BrowserWindow({
     width: 1024,
@@ -192,7 +209,7 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
-})
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

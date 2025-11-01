@@ -1,0 +1,16 @@
+{
+  "id": "schema-1761992818426",
+  "name": "schema-1761992818426",
+  "createdAt": "2025-11-01T10:26:58.428Z",
+  "updatedAt": "2025-11-01T10:26:58.430Z",
+  "blocks": [
+    {
+      "id": "block-1761992818426-z2umfnat2",
+      "title": "Matematik 1",
+      "room": "A101",
+      "teacher": "Berg",
+      "createdAt": "2025-11-01T10:26:58.426Z",
+      "updatedAt": "2025-11-01T10:26:58.426Z"
+    }
+  ]
+}
