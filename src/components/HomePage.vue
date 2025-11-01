@@ -22,7 +22,7 @@ export default defineComponent({
     });
 
     const goToCreator = () => {
-      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
+      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'preset-selection' } }));
     };
 
     return {

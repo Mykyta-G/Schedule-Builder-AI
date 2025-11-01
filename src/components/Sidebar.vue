@@ -314,7 +314,13 @@ import {
 
 export default defineComponent({
   name: 'Sidebar',
-  setup() {
+  props: {
+    initialPresetId: {
+      type: String,
+      default: null,
+    },
+  },
+  setup(props) {
     // State
     const errorMessage = ref('');
     const newBlock = reactive({
@@ -1310,6 +1316,12 @@ export default defineComponent({
     // Lifecycle
     onMounted(async () => {
       await loadSchedules();
+      
+      // Load initial preset if provided
+      if (props.initialPresetId) {
+        activeSchemaId.value = props.initialPresetId;
+        await loadSchema(props.initialPresetId);
+      }
       
       // Listen for day selection events from SimpleSchedule
       window.addEventListener('schedule-day-selected', handleScheduleDaySelect);

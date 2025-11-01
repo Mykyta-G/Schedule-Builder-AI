@@ -4,7 +4,7 @@
       <a href="#" @click.prevent="goToHome">← Home</a>
     </div>
     <div class="creator-layout">
-      <Sidebar />
+      <Sidebar :initial-preset-id="presetId" />
       <div class="schedule-section">
         <SimpleSchedule @change="onScheduleChange" />
       </div>
@@ -32,14 +32,20 @@ import Sidebar from './Sidebar.vue';
 export default defineComponent({
   name: 'CreatorPage',
   components: { SimpleSchedule, ChatWindow, Sidebar },
-  setup() {
+  props: {
+    presetId: {
+      type: String,
+      default: null,
+    },
+  },
+  setup(props) {
     const title = ref('');
     const description = ref('');
     const schedule = ref({});
     const isChatOpen = ref(false);
 
     const goToHome = () => {
-      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'home' } }));
+      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'preset-selection' } }));
     };
 
     const toggleChat = () => {
