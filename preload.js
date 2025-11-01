@@ -6,7 +6,5 @@ contextBridge.exposeInMainWorld('api', {
     chat: (data) => ipcRenderer.invoke('chat', data),
     listSchedules: () => ipcRenderer.invoke('list-schedules'),
     readSchedule: (scheduleId) => ipcRenderer.invoke('read-schedule', scheduleId),
-    saveSchedule: (schedule) => ipcRenderer.invoke('save-schedule', schedule),
-    // Get Supabase configuration from main process
-    getSupabaseConfig: () => ipcRenderer.invoke('get-supabase-config')
+    saveSchedule: (schedule) => ipcRenderer.invoke('save-schedule', schedule)
 });

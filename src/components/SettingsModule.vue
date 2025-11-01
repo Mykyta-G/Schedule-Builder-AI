@@ -54,33 +54,6 @@
           </div>
         </div>
 
-        <div class="settings-section">
-          <h3 class="section-title">Supabase-konfiguration</h3>
-          
-          <div class="form-group">
-            <label>Supabase URL</label>
-            <input
-              type="text"
-              :value="supabaseConfig.url || 'Ej konfigurerad'"
-              class="form-input"
-              readonly
-              disabled
-            />
-            <p class="hint">Konfigureras i .env-filen</p>
-          </div>
-
-          <div class="form-group">
-            <label>Supabase Anon Key</label>
-            <input
-              type="text"
-              :value="supabaseConfig.anonKey ? '***' + supabaseConfig.anonKey.slice(-4) : 'Ej konfigurerad'"
-              class="form-input"
-              readonly
-              disabled
-            />
-            <p class="hint">Konfigureras i .env-filen</p>
-          </div>
-        </div>
 
         <div class="settings-section">
           <h3 class="section-title">Export/Import</h3>
@@ -127,10 +100,7 @@ export default defineComponent({
       theme: 'light',
       openaiApiKey: '',
     });
-    const supabaseConfig = ref({
-      url: '',
-      anonKey: '',
-    });
+    // Removed Supabase configuration
 
     const getDefaultSettings = () => {
       console.log('[SettingsModule] Getting default settings');
@@ -218,31 +188,7 @@ export default defineComponent({
       }
     };
 
-    const loadSupabaseConfig = async () => {
-      console.log('[SettingsModule] Loading Supabase configuration...', {
-        timestamp: new Date().toISOString()
-      });
-      try {
-        if (!window.api || !window.api.getSupabaseConfig) {
-          console.warn('[SettingsModule] window.api.getSupabaseConfig not available');
-          return;
-        }
-        const config = await window.api.getSupabaseConfig();
-        supabaseConfig.value = config;
-        console.log('[SettingsModule] Supabase configuration loaded', {
-          hasUrl: !!config.url,
-          hasAnonKey: !!config.anonKey,
-          timestamp: new Date().toISOString()
-        });
-      } catch (error) {
-        console.error('[SettingsModule] Failed to load Supabase config:', {
-          error: error.message,
-          errorType: error.constructor.name,
-          stack: error.stack,
-          timestamp: new Date().toISOString()
-        });
-      }
-    };
+    // Removed Supabase configuration loading
 
     const loadApiKey = () => {
       console.log('[SettingsModule] Loading API key from localStorage...');
@@ -387,7 +333,6 @@ export default defineComponent({
       try {
         loadSettings();
         loadApiKey();
-        loadSupabaseConfig();
         console.log('[SettingsModule] Component mounted successfully');
       } catch (error) {
         console.error('[SettingsModule] Mount failed:', error);
@@ -404,7 +349,6 @@ export default defineComponent({
         console.log('[SettingsModule] Module opened...');
         loadSettings();
         loadApiKey();
-        loadSupabaseConfig();
       } else {
         console.log('[SettingsModule] Module closed...');
       }
@@ -413,7 +357,6 @@ export default defineComponent({
     return {
       errorMessage,
       settings,
-      supabaseConfig,
       importInput,
       handleClose,
       handleSave,
