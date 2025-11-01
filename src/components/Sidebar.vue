@@ -304,6 +304,13 @@
 
 <script>
 import { defineComponent, ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { 
+  listSchedules as listSchedulesFromSupabase, 
+  getSchedule as getScheduleFromSupabase,
+  saveSchedule as saveScheduleToSupabase,
+  createBlock as createBlockInSupabase,
+  updateBlock as updateBlockInSupabase
+} from '../utils/supabase';
 
 export default defineComponent({
   name: 'Sidebar',
@@ -498,6 +505,19 @@ export default defineComponent({
 
     const loadSchedules = async () => {
       try {
+        // Try Supabase first
+        try {
+          const result = await listSchedulesFromSupabase();
+          schedules.value = result || [];
+          filteredSchedules.value = schedules.value;
+          console.log('Loaded schedules from Supabase:', schedules.value.length);
+          return;
+        } catch (supabaseError) {
+          console.log('Supabase not available, falling back to local storage:', supabaseError);
+          // Fallback to local storage
+        }
+
+        // Fallback to local IPC
         if (!window.api || !window.api.listSchedules) {
           showError('IPC API inte tillgänglig');
           return;
@@ -519,11 +539,24 @@ export default defineComponent({
       }
 
       try {
-        if (!window.api || !window.api.readSchedule) {
-          showError('IPC API inte tillgänglig');
-          return;
+        let schema = null;
+
+        // Try Supabase first
+        try {
+          schema = await getScheduleFromSupabase(scheduleId);
+          if (schema) {
+            console.log('Loaded schema from Supabase:', scheduleId);
+          }
+        } catch (supabaseError) {
+          console.log('Supabase not available, falling back to local storage:', supabaseError);
+          // Fallback to local storage
+          if (!window.api || !window.api.readSchedule) {
+            showError('IPC API inte tillgänglig');
+            return;
+          }
+          schema = await window.api.readSchedule(scheduleId);
         }
-        const schema = await window.api.readSchedule(scheduleId);
+
         if (schema) {
           // Ensure we have a clean, reactive object
           activeSchema.value = {
@@ -564,11 +597,6 @@ export default defineComponent({
 
     const saveSchema = async (schema) => {
       try {
-        if (!window.api || !window.api.saveSchedule) {
-          showError('IPC API inte tillgänglig');
-          return;
-        }
-        
         // Create a deep clone of the schema to ensure it's serializable
         // Remove any functions, circular references, or non-serializable data
         const serializableSchema = {
@@ -587,12 +615,28 @@ export default defineComponent({
         };
         
         console.log('Saving schema:', serializableSchema);
+
+        // Try Supabase first
+        try {
+          await saveScheduleToSupabase(serializableSchema);
+          console.log('Schema saved successfully to Supabase');
+          return;
+        } catch (supabaseError) {
+          console.log('Supabase not available, falling back to local storage:', supabaseError);
+          // Fallback to local storage
+        }
+
+        // Fallback to local IPC
+        if (!window.api || !window.api.saveSchedule) {
+          showError('IPC API inte tillgänglig');
+          return;
+        }
         const result = await window.api.saveSchedule(serializableSchema);
         if (!result.success) {
           showError(result.error || 'Kunde inte spara schema');
           return;
         }
-        console.log('Schema saved successfully:', result);
+        console.log('Schema saved successfully to local storage:', result);
       } catch (error) {
         console.error('Error saving schema:', error);
         showError('Kunde inte spara schema: ' + error.message);
@@ -670,8 +714,20 @@ export default defineComponent({
           blocks: [...schemaToSave.blocks]
         };
 
-        // Save to disk
-        await saveSchema(schemaToSave);
+        // Try saving block to Supabase first (individual block operation)
+        try {
+          await createBlockInSupabase(activeSchemaId.value, block);
+          console.log('Block created in Supabase');
+          // Update schedule timestamp
+          if (activeSchema.value) {
+            activeSchema.value.updatedAt = new Date().toISOString();
+          }
+        } catch (supabaseError) {
+          console.log('Supabase not available for block creation, using full schema save:', supabaseError);
+          // Fallback to full schema save (local or Supabase will handle fallback)
+          await saveSchema(schemaToSave);
+        }
+        
         console.log('Block created and saved successfully');
         console.log('Active blocks count:', activeSchemaBlocks.value.length);
 
@@ -718,6 +774,7 @@ export default defineComponent({
 
       const updatedBlock = {
         ...activeSchemaBlocks.value[blockIndex],
+        id: editingBlock.id,
         title: editingBlock.title.trim() || '',
         room: editingBlock.room.trim() || '',
         teacher: editingBlock.teacher.trim() || '',
@@ -728,6 +785,15 @@ export default defineComponent({
       if (activeSchema.value) {
         activeSchema.value.blocks = activeSchemaBlocks.value;
         activeSchema.value.updatedAt = new Date().toISOString();
+      }
+
+      // Try updating block in Supabase first
+      try {
+        await updateBlockInSupabase(updatedBlock);
+        console.log('Block updated in Supabase');
+      } catch (supabaseError) {
+        console.log('Supabase not available for block update, using full schema save:', supabaseError);
+        // Fallback to full schema save (local or Supabase will handle fallback)
         await saveSchema(activeSchema.value);
       }
 
