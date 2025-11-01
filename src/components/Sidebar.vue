@@ -1348,7 +1348,8 @@ export default defineComponent({
 <style scoped>
 .sidebar {
   width: 320px;
-  height: 100vh;
+  min-width: 320px;
+  height: 100%;
   background: #ffffff;
   border-right: 1px solid #e5e7eb;
   overflow-y: auto;
@@ -1356,6 +1357,7 @@ export default defineComponent({
   flex-direction: column;
   padding: 16px;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .sidebar-header {

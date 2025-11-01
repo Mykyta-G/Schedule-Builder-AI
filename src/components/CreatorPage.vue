@@ -4,6 +4,7 @@
       <a href="#" @click.prevent="goToHome">← Home</a>
     </div>
     <div class="creator-layout">
+      <Sidebar :initial-preset-id="presetId" />
       <div class="schedule-section">
         <SimpleSchedule @change="onScheduleChange" />
       </div>
@@ -18,10 +19,6 @@
       <div class="chat-section" :class="{ 'open': isChatOpen }">
         <ChatWindow />
       </div>
-    <Sidebar />
-    <div class="creator-content">
-      <a href="#" @click.prevent="goToHome" class="home-link">Home Page</a>
-      <SimpleSchedule @change="onScheduleChange" />
     </div>
   </div>
 </template>
@@ -30,20 +27,25 @@
 import { defineComponent, ref } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
+import Sidebar from './Sidebar.vue';
 
 export default defineComponent({
   name: 'CreatorPage',
-  components: { SimpleSchedule, ChatWindow, Sidebar},
-
-import Sidebar from './Sidebar.vue';
-  setup() {
+  components: { SimpleSchedule, ChatWindow, Sidebar },
+  props: {
+    presetId: {
+      type: String,
+      default: null,
+    },
+  },
+  setup(props) {
     const title = ref('');
     const description = ref('');
     const schedule = ref({});
     const isChatOpen = ref(false);
 
     const goToHome = () => {
-      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'home' } }));
+      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'preset-selection' } }));
     };
 
     const toggleChat = () => {
@@ -191,26 +193,6 @@ import Sidebar from './Sidebar.vue';
 
 .chat-section:not(.open) {
   transform: translateX(100%);
-  display: flex;
-  height: 100vh;
-  overflow: hidden;
-}
-
-.creator-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-
-.home-link {
-  display: inline-block;
-  margin-bottom: 16px;
-  color: #8b5cf6;
-  text-decoration: none;
-}
-
-.home-link:hover {
-  text-decoration: underline;
 }
 </style>
 
