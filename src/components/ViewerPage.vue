@@ -399,6 +399,7 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: transparent;
 }
 
 .top-nav {
@@ -474,7 +475,7 @@ export default defineComponent({
   flex: 1;
   overflow-y: auto;
   padding: 3vh;
-  background: #fafafa;
+  background: transparent;
 }
 
 .creator-container {
