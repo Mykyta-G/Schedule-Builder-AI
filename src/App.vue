@@ -1,8 +1,8 @@
 <template>
   <div id="app">
     <HomePage v-if="currentPage === 'home'" />
-    <PresetSelectionPage v-else-if="currentPage === 'preset-selection'" />
-    <CreatorPage v-else-if="currentPage === 'creator'" :preset-id="selectedPresetId" />
+    <CreatorPage v-else-if="currentPage === 'creator'" />
+    <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" />
   </div>
 </template>
 
@@ -10,14 +10,14 @@
 import { defineComponent, ref, onMounted } from 'vue';
 import HomePage from './components/HomePage.vue';
 import CreatorPage from './components/CreatorPage.vue';
-import PresetSelectionPage from './components/PresetSelectionPage.vue';
+import ViewerPage from './components/ViewerPage.vue';
 
 export default defineComponent({
   name: 'App',
   components: {
     HomePage,
     CreatorPage,
-    PresetSelectionPage,
+    ViewerPage,
   },
   setup() {
     const currentPage = ref('home');

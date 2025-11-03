@@ -1,0 +1,17 @@
+{
+  "id": "schema-1762162987094",
+  "name": "schema-1762162987094",
+  "description": "",
+  "createdAt": "2025-11-03T09:43:07.095Z",
+  "updatedAt": "2025-11-03T09:43:07.102Z",
+  "blocks": [
+    {
+      "id": "block-1762162987094-f8rb1vcjs",
+      "title": "Svenska 3",
+      "room": "C103",
+      "teacher": "Andersson",
+      "createdAt": "2025-11-03T09:43:07.094Z",
+      "updatedAt": "2025-11-03T09:43:07.094Z"
+    }
+  ]
+}

@@ -19,6 +19,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "comment-do-not-use": "You can add '&& python server.py, to start a local server alongside electron if needed",
     "dev": "concurrently --kill-others-on-fail --kill-others \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
     "dev:no-reload": "concurrently --kill-others-on-fail --kill-others \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
     "build": "vite build",

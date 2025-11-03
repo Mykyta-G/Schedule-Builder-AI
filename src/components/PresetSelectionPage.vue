@@ -159,12 +159,12 @@ export default defineComponent({
     });
 
     const selectPreset = (preset) => {
-      window.dispatchEvent(new CustomEvent('navigate', { 
-        detail: { 
-          page: 'creator',
-          presetId: preset.id
-        } 
-      }));
+        window.dispatchEvent(new CustomEvent('navigate', { 
+          detail: { 
+            page: 'viewer',
+            presetId: preset.id
+          } 
+        }));
     };
 
     const createNewPreset = async () => {
@@ -197,10 +197,10 @@ export default defineComponent({
           return;
         }
         
-        // Navigate to creator page
+        // Navigate to viewer page
         window.dispatchEvent(new CustomEvent('navigate', { 
           detail: { 
-            page: 'creator',
+            page: 'viewer',
             presetId: newPresetId,
             presetName: presetName
           } 
