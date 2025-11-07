@@ -161,8 +161,14 @@ import { defineComponent, ref, reactive, computed, watch, onMounted, onUnmounted
 
 export default defineComponent({
   name: 'SimpleSchedule',
+  props: {
+    externalSchedule: {
+      type: Object,
+      default: null,
+    },
+  },
   emits: ['change'],
-  setup(_, { emit }) {
+  setup(props, { emit }) {
     const days = ref(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
     const selectedDay = ref('Monday');
     const viewMode = ref('week'); // 'day' or 'week'
@@ -177,12 +183,101 @@ export default defineComponent({
 
     // Display days based on view mode
     const displayDays = computed(() => {
-      return viewMode.value === 'week' ? days.value : [selectedDay.value];
+      if (viewMode.value === 'week') {
+        if (days.value.length <= 7) {
+          return days.value;
+        }
+        const selectedIndex = Math.max(days.value.indexOf(selectedDay.value), 0);
+        const windowStart = Math.max(0, selectedIndex - 3);
+        const windowEnd = Math.min(days.value.length, windowStart + 7);
+        return days.value.slice(windowStart, windowEnd);
+      }
+      return [selectedDay.value];
     });
 
     // Schedules per day
     const schedules = reactive({});
-    for (const d of days.value) schedules[d] = [];
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    const parseIsoDate = (value) => {
+      if (typeof value !== 'string' || !isoDateRegex.test(value)) return null;
+      const parsed = new Date(`${value}T00:00:00`);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const compareDayKeys = (a, b) => {
+      const dateA = parseIsoDate(a);
+      const dateB = parseIsoDate(b);
+      if (dateA && dateB) {
+        return dateA.getTime() - dateB.getTime();
+      }
+      if (dateA) return -1;
+      if (dateB) return 1;
+      return a.localeCompare(b);
+    };
+    const ensureDayBuckets = (dayList) => {
+      for (const d of dayList) {
+        if (!schedules[d]) {
+          schedules[d] = [];
+        }
+      }
+    };
+
+    ensureDayBuckets(days.value);
+
+    const coerceScheduleEntry = (entry, fallbackId) => {
+      const baseId = typeof entry?.id === 'number' ? entry.id : fallbackId;
+      return {
+        id: baseId,
+        name: entry?.name || '',
+        startMinutes: typeof entry?.startMinutes === 'number' ? entry.startMinutes : startHour * 60,
+        duration: typeof entry?.duration === 'number' ? entry.duration : 60,
+        colorIndex: entry?.colorIndex,
+      };
+    };
+
+    const emitChange = () => {
+      const payload = {};
+      for (const d of days.value) {
+        payload[d] = schedules[d].map((i) => ({
+          id: i.id,
+          name: i.name,
+          startMinutes: i.startMinutes,
+          duration: i.duration,
+        }));
+      }
+      emit('change', payload);
+    };
+
+    const applyExternalSchedule = (incoming) => {
+      if (!incoming || typeof incoming !== 'object') {
+        return;
+      }
+
+      const incomingKeys = Array.from(new Set(Object.keys(incoming)));
+      const combinedDays = Array.from(new Set([...(days.value || []), ...incomingKeys]));
+      combinedDays.sort(compareDayKeys);
+
+      const filteredDays = combinedDays.filter((day) => incomingKeys.includes(day) || parseIsoDate(day));
+      days.value = filteredDays.length > 0 ? filteredDays : combinedDays;
+      ensureDayBuckets(days.value);
+
+      const fallbackBase = Date.now();
+      days.value.forEach((day, index) => {
+        const dayEntries = Array.isArray(incoming[day]) ? incoming[day] : [];
+        schedules[day] = dayEntries.map((entry, entryIndex) => coerceScheduleEntry(entry, fallbackBase + index + entryIndex));
+      });
+
+      if (!days.value.includes(selectedDay.value)) {
+        selectedDay.value = days.value[0] || selectedDay.value;
+      }
+
+      if (days.value.length > 7) {
+        viewMode.value = 'day';
+      }
+
+      emitChange();
+    };
 
     // Determine dynamic end hour based on items so grid expands instead of scrolling
     const maxEndMinutes = computed(() => {
@@ -261,13 +356,20 @@ export default defineComponent({
     };
 
     const getShortDayName = (day) => {
+      const parsed = parseIsoDate(day);
+      if (parsed) {
+        return parsed.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
+      }
       return day.substring(0, 3).toUpperCase();
     };
 
     const getDayDate = (day) => {
-      // Simple date display - you can enhance this with actual dates
+      const parsed = parseIsoDate(day);
+      if (parsed) {
+        return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      }
       const dayIndex = days.value.indexOf(day);
-      return dayIndex + 1;
+      return dayIndex !== -1 ? dayIndex + 1 : '';
     };
 
     const addItem = () => {
@@ -567,18 +669,15 @@ export default defineComponent({
       window.removeEventListener('schedule-select-day', handleCalendarDaySelect);
     });
 
-    const emitChange = () => {
-      const payload = {};
-      for (const d of days.value) {
-        payload[d] = schedules[d].map((i) => ({
-          id: i.id,
-          name: i.name,
-          startMinutes: i.startMinutes,
-          duration: i.duration,
-        }));
-      }
-      emit('change', payload);
-    };
+    watch(
+      () => props.externalSchedule,
+      (value) => {
+        if (value) {
+          applyExternalSchedule(value);
+        }
+      },
+      { deep: true }
+    );
 
     watch([], () => {}, { immediate: true });
     emitChange();

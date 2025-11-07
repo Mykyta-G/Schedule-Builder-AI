@@ -3,6 +3,7 @@ const path = require('path');
 const scheduleHandlers = require('./backend/scheduleHandlers');
 const { handleChat } = require('./backend/chatHandler');
 const { getDatabase, closeDatabase } = require('./backend/database');
+const { runScheduleSolver } = require('./backend/z3Solver');
 
 let mainWindow;
 
@@ -49,3 +50,4 @@ ipcMain.handle('list-schedules', () => scheduleHandlers.listSchedules());
 ipcMain.handle('read-schedule', (event, scheduleId) => scheduleHandlers.readSchedule(scheduleId));
 ipcMain.handle('save-schedule', (event, schedule) => scheduleHandlers.saveSchedule(schedule));
 ipcMain.handle('chat', (event, data) => handleChat(data));
+ipcMain.handle('run-solver', (event, payload) => runScheduleSolver(payload));

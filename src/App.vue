@@ -11,7 +11,7 @@
     </div>
     <HomePage v-if="currentPage === 'home'" />
     <CreatorPage v-else-if="currentPage === 'creator'" />
-    <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" />
+    <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" />
   </div>
 </template>
 
@@ -31,6 +31,7 @@ export default defineComponent({
   setup() {
     const currentPage = ref('home');
     const selectedPresetId = ref(null);
+    const mockData = ref(null);
     const bubbles = ref([]);
     let bubbleInterval = null;
     let bubbleIdCounter = 0;
@@ -111,6 +112,7 @@ export default defineComponent({
       window.addEventListener('navigate', (event) => {
         currentPage.value = event.detail.page;
         selectedPresetId.value = event.detail.presetId || null;
+        mockData.value = event.detail.mockData || null;
       });
 
       // Create initial bubbles immediately (more bubbles, faster)
@@ -159,6 +161,7 @@ export default defineComponent({
     return {
       currentPage,
       selectedPresetId,
+      mockData,
       bubbles,
     };
   },

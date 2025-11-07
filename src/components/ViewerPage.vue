@@ -60,7 +60,10 @@
 
             <!-- Manual Entry Categories -->
             <div class="categories-section">
-              <h3 class="section-title">Manual Entry</h3>
+              <div class="section-title-row">
+                <h3 class="section-title">Manual Entry</h3>
+                <button class="mock-fill-btn" @click="loadMockManualData">Load Mock Data</button>
+              </div>
               
               <!-- Classes Category -->
               <div class="category-card">
@@ -136,6 +139,12 @@
                 </div>
                 <div class="items-list">
                   <div v-for="(slot, index) in timeSlots" :key="index" class="item-row">
+                    <select
+                      v-model="slot.day"
+                      class="item-input day-select"
+                    >
+                      <option v-for="day in daysOfWeek" :key="day" :value="day">{{ day }}</option>
+                    </select>
                     <input 
                       v-model="slot.start" 
                       type="text" 
@@ -182,20 +191,40 @@
 
             <!-- Build Schedule Button -->
             <div class="build-section">
-              <button class="build-btn" @click="buildSchedule" :disabled="!canBuildSchedule">
-                <span class="build-icon">⚙️</span>
-                <span>Build Schedule</span>
+              <button
+                class="build-btn"
+                @click="buildWithSolver"
+                :disabled="!isBuildReady || isBuilding"
+              >
+                <span class="build-icon">⚙</span>
+                <span>{{ isBuilding ? 'Running solver…' : 'Build with Z3' }}</span>
               </button>
-              <p class="build-hint" v-if="!canBuildSchedule">
-                Add at least one item in each category to build schedule
+              <p class="build-hint">
+                Add at least one item in each category, then run the solver to generate a baseline timetable.
               </p>
+              <p v-if="solverError" class="build-error">{{ solverError }}</p>
+              <p v-else-if="buildSuccess" class="build-success">Schedule generated! Switched to viewer mode.</p>
+              <div v-if="solverAssignments.length" class="solver-assignments">
+                <h4 class="solver-title">Generated Assignments</h4>
+                <ul class="solver-list">
+                  <li v-for="(assignment, index) in solverAssignments" :key="index" class="solver-item">
+                    <span class="solver-subject">{{ assignment.subject }}</span>
+                    <span class="solver-meta">
+                      {{ assignment.class }} · {{ assignment.teacher }} · {{ assignment.classroom }}
+                    </span>
+                    <span class="solver-timeslot">
+                      {{ assignment.timeSlot?.day }} {{ assignment.timeSlot?.start }} - {{ assignment.timeSlot?.end }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Viewer Mode: Schedule Visualization -->
         <div v-else>
-          <SimpleSchedule @change="onScheduleChange" />
+          <SimpleSchedule @change="onScheduleChange" :external-schedule="generatedSchedule" />
         </div>
       </div>
       <button 
@@ -214,7 +243,7 @@
 </template>
 
 <script>
-import { defineComponent, ref, computed } from 'vue';
+import { defineComponent, ref, computed, watch } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
 import Sidebar from './Sidebar.vue';
@@ -229,18 +258,137 @@ export default defineComponent({
       type: String,
       default: null,
     },
+    initialData: {
+      type: Object,
+      default: null,
+    },
   },
   setup(props) {
     const title = ref('');
     const description = ref('');
     const schedule = ref({});
     const isChatOpen = ref(false);
-    const isCreatorMode = ref(true); // Default to creator mode
+    const isCreatorMode = ref(true);
     const classes = ref([]);
     const teachers = ref([]);
     const classrooms = ref([]);
     const timeSlots = ref([]);
     const subjects = ref([]);
+    const generatedSchedule = ref(null);
+    const solverAssignments = ref([]);
+    const solverError = ref(null);
+    const isBuilding = ref(false);
+    const buildSuccess = ref(false);
+    const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    const resetSolverState = () => {
+      generatedSchedule.value = null;
+      solverAssignments.value = [];
+      solverError.value = null;
+      buildSuccess.value = false;
+    };
+
+    const applyInitialData = (data) => {
+      if (!data || typeof data !== 'object') {
+        return;
+      }
+
+      const sanitizeEntities = (items) => {
+        if (!Array.isArray(items)) return [];
+        return items
+          .map((item) => ({ name: (item?.name || '').trim() }))
+          .filter((item) => item.name);
+      };
+
+      const sanitizeTimeSlots = (slots) => {
+        if (!Array.isArray(slots)) return [];
+        return slots
+          .map((slot) => ({
+            day: (() => {
+              const trimmed = (slot?.day || '').trim();
+              if (!trimmed) return daysOfWeek[0];
+              if (daysOfWeek.includes(trimmed) || isoDateRegex.test(trimmed)) {
+                return trimmed;
+              }
+              return daysOfWeek[0];
+            })(),
+            start: (slot?.start || '').trim(),
+            end: (slot?.end || '').trim(),
+          }))
+          .filter((slot) => slot.start && slot.end);
+      };
+
+      classes.value = sanitizeEntities(data.classes);
+      teachers.value = sanitizeEntities(data.teachers);
+      classrooms.value = sanitizeEntities(data.classrooms);
+      subjects.value = sanitizeEntities(data.subjects);
+      timeSlots.value = sanitizeTimeSlots(data.timeSlots);
+
+      isCreatorMode.value = true;
+      resetSolverState();
+    };
+
+    const normalizeScheduleResult = (scheduleByDay = {}) => {
+      const normalized = {};
+      const processedDays = new Set();
+      const fallbackBase = Date.now();
+
+      Object.keys(scheduleByDay || {}).forEach((dayKey) => {
+        const entries = Array.isArray(scheduleByDay[dayKey]) ? scheduleByDay[dayKey] : [];
+        normalized[dayKey] = entries.map((entry, index) => ({
+          id: typeof entry?.id === 'number' ? entry.id : fallbackBase + index,
+          name: entry?.name || '',
+          startMinutes: typeof entry?.startMinutes === 'number' ? entry.startMinutes : 8 * 60,
+          duration: typeof entry?.duration === 'number' ? entry.duration : 60,
+          colorIndex: entry?.colorIndex,
+        }));
+        processedDays.add(dayKey);
+      });
+
+      if (processedDays.size === 0) {
+        daysOfWeek.forEach((day) => {
+          normalized[day] = [];
+        });
+      }
+
+      return normalized;
+    };
+
+    const mapEntities = (items) => {
+      return items
+        .map((item) => ({ name: (item?.name || '').trim() }))
+        .filter((item) => item.name);
+    };
+
+    const mapTimeSlots = (slots) => {
+      const normalizeDayValue = (value) => {
+        const trimmed = (value || '').trim();
+        if (!trimmed) return daysOfWeek[0];
+        if (daysOfWeek.includes(trimmed) || isoDateRegex.test(trimmed)) {
+          return trimmed;
+        }
+        return daysOfWeek[0];
+      };
+
+      return slots
+        .map((slot) => ({
+          day: normalizeDayValue(slot?.day),
+          start: (slot?.start || '').trim(),
+          end: (slot?.end || '').trim(),
+        }))
+        .filter((slot) => slot.start && slot.end);
+    };
+
+    const isBuildReady = computed(() => {
+      return (
+        classes.value.length > 0 &&
+        teachers.value.length > 0 &&
+        classrooms.value.length > 0 &&
+        subjects.value.length > 0 &&
+        timeSlots.value.length > 0
+      );
+    });
 
     const goToHome = () => {
       window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
@@ -251,16 +399,13 @@ export default defineComponent({
     };
 
     const importFromSchoolsoft = () => {
-      // TODO: Implement Schoolsoft import
       console.log('Import from Schoolsoft clicked');
     };
 
     const importFromSkola24 = () => {
-      // TODO: Implement Skola24 import
       console.log('Import from Skola24 clicked');
     };
 
-    // Add functions
     const addClass = () => {
       classes.value.push({ name: '' });
     };
@@ -274,14 +419,13 @@ export default defineComponent({
     };
 
     const addTimeSlot = () => {
-      timeSlots.value.push({ start: '', end: '' });
+      timeSlots.value.push({ day: daysOfWeek[0], start: '', end: '' });
     };
 
     const addSubject = () => {
       subjects.value.push({ name: '' });
     };
 
-    // Remove functions
     const removeClass = (index) => {
       classes.value.splice(index, 1);
     };
@@ -300,42 +444,6 @@ export default defineComponent({
 
     const removeSubject = (index) => {
       subjects.value.splice(index, 1);
-    };
-
-    // Check if we can build schedule
-    const canBuildSchedule = computed(() => {
-      return classes.value.length > 0 &&
-             teachers.value.length > 0 &&
-             classrooms.value.length > 0 &&
-             timeSlots.value.length > 0 &&
-             subjects.value.length > 0;
-    });
-
-    // Build schedule function
-    const buildSchedule = async () => {
-      const scheduleData = {
-        classes: classes.value.filter(c => c.name.trim()),
-        teachers: teachers.value.filter(t => t.name.trim()),
-        classrooms: classrooms.value.filter(c => c.name.trim()),
-        timeSlots: timeSlots.value.filter(s => s.start.trim() && s.end.trim()),
-        subjects: subjects.value.filter(s => s.name.trim()),
-      };
-
-      console.log('Building schedule with data:', scheduleData);
-
-      // TODO: Call Python script to build schedule
-      if (window.api && window.api.buildSchedule) {
-        try {
-          const result = await window.api.buildSchedule(scheduleData);
-          console.log('Schedule built:', result);
-          // Switch to viewer mode to show the schedule
-          isCreatorMode.value = false;
-        } catch (error) {
-          console.error('Error building schedule:', error);
-        }
-      } else {
-        console.log('buildSchedule API not available yet');
-      }
     };
 
     const createSchedule = async () => {
@@ -358,6 +466,184 @@ export default defineComponent({
       schedule.value = payload;
     };
 
+    const buildWithSolver = async () => {
+      solverError.value = null;
+      solverAssignments.value = [];
+      buildSuccess.value = false;
+
+      if (!isBuildReady.value) {
+        solverError.value = 'Please add classes, teachers, classrooms, subjects, and time slots before building.';
+        return;
+      }
+
+      if (!window.api || !window.api.runScheduleSolver) {
+        solverError.value = 'Solver API is not available in this environment.';
+        return;
+      }
+
+      isBuilding.value = true;
+
+      const payload = {
+        classes: mapEntities(classes.value),
+        teachers: mapEntities(teachers.value),
+        classrooms: mapEntities(classrooms.value),
+        subjects: mapEntities(subjects.value),
+        timeSlots: mapTimeSlots(timeSlots.value),
+      };
+
+      try {
+        const response = await window.api.runScheduleSolver(payload);
+        generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
+        solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
+        buildSuccess.value = true;
+        isCreatorMode.value = false;
+      } catch (error) {
+        solverError.value = error?.message || 'Failed to build schedule with Z3 solver.';
+      } finally {
+        isBuilding.value = false;
+      }
+    };
+
+    const padNumber = (value) => value.toString().padStart(2, '0');
+
+    const minutesToClock = (minutes) => {
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return `${padNumber(hours)}:${padNumber(mins)}`;
+    };
+
+    const generateSixMonthSchedule = () => {
+      const scheduleByDay = {};
+      const assignmentsList = [];
+
+      const now = new Date();
+      const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      const weekday = (startDate.getDay() + 6) % 7; // 0 = Monday
+      startDate.setDate(startDate.getDate() - weekday);
+
+      const sixMonthsLater = new Date(startDate);
+      sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);
+
+      const templates = [
+        { dayOffset: 0, subject: 'Mathematics', className: 'Class A', teacher: 'Alice Andersson', classroom: 'Room 101', startMinutes: 8 * 60, duration: 60 },
+        { dayOffset: 0, subject: 'English', className: 'Class B', teacher: 'Björn Berg', classroom: 'Room 202', startMinutes: 9 * 60 + 15, duration: 60 },
+        { dayOffset: 1, subject: 'Physics', className: 'Class C', teacher: 'Carin Carlsson', classroom: 'Lab 3', startMinutes: 8 * 60, duration: 60 },
+        { dayOffset: 2, subject: 'Biology', className: 'Class A', teacher: 'Dan Danielsson', classroom: 'Lab 3', startMinutes: 10 * 60, duration: 60 },
+        { dayOffset: 3, subject: 'Swedish', className: 'Class B', teacher: 'Alice Andersson', classroom: 'Room 101', startMinutes: 8 * 60 + 30, duration: 60 },
+        { dayOffset: 4, subject: 'History', className: 'Class C', teacher: 'Björn Berg', classroom: 'Room 202', startMinutes: 9 * 60, duration: 60 },
+      ];
+
+      let eventCounter = 0;
+
+      for (let week = 0; week < 26; week += 1) {
+        const weekStart = new Date(startDate);
+        weekStart.setDate(weekStart.getDate() + week * 7);
+
+        for (const template of templates) {
+          const eventDate = new Date(weekStart);
+          eventDate.setDate(eventDate.getDate() + template.dayOffset);
+
+          if (eventDate >= sixMonthsLater) {
+            continue;
+          }
+
+          const dayKey = eventDate.toISOString().slice(0, 10);
+
+          if (!scheduleByDay[dayKey]) {
+            scheduleByDay[dayKey] = [];
+          }
+
+          const eventId = eventDate.getTime() + eventCounter;
+          const startMinutes = template.startMinutes;
+          const duration = template.duration;
+
+          scheduleByDay[dayKey].push({
+            id: eventId,
+            name: `${template.subject} (${template.className})`,
+            startMinutes,
+            duration,
+            colorIndex: template.dayOffset % 5,
+          });
+
+          assignmentsList.push({
+            subject: template.subject,
+            class: template.className,
+            teacher: template.teacher,
+            classroom: template.classroom,
+            timeSlot: {
+              day: dayKey,
+              start: minutesToClock(startMinutes),
+              end: minutesToClock(startMinutes + duration),
+            },
+          });
+
+          eventCounter += 1;
+        }
+      }
+
+      Object.keys(scheduleByDay).forEach((dayKey) => {
+        scheduleByDay[dayKey].sort((a, b) => a.startMinutes - b.startMinutes);
+      });
+
+      return { scheduleByDay, assignments: assignmentsList };
+    };
+
+    const loadMockManualData = () => {
+      const mockPayload = {
+        classes: [
+          { name: 'Class A' },
+          { name: 'Class B' },
+          { name: 'Class C' },
+        ],
+        teachers: [
+          { name: 'Alice Andersson' },
+          { name: 'Björn Berg' },
+          { name: 'Carin Carlsson' },
+          { name: 'Dan Danielsson' },
+        ],
+        classrooms: [
+          { name: 'Room 101' },
+          { name: 'Room 202' },
+          { name: 'Lab 3' },
+        ],
+        subjects: [
+          { name: 'Mathematics' },
+          { name: 'Physics' },
+          { name: 'Biology' },
+          { name: 'Swedish' },
+          { name: 'English' },
+          { name: 'History' },
+        ],
+        timeSlots: [
+          { day: 'Monday', start: '08:00', end: '09:00' },
+          { day: 'Monday', start: '09:15', end: '10:15' },
+          { day: 'Tuesday', start: '08:30', end: '09:30' },
+          { day: 'Wednesday', start: '10:00', end: '11:00' },
+          { day: 'Thursday', start: '08:30', end: '09:30' },
+          { day: 'Friday', start: '09:00', end: '10:00' },
+        ],
+      };
+
+      applyInitialData(mockPayload);
+
+      const { scheduleByDay, assignments } = generateSixMonthSchedule();
+      generatedSchedule.value = normalizeScheduleResult(scheduleByDay);
+      solverAssignments.value = assignments;
+      solverError.value = null;
+      buildSuccess.value = true;
+      isCreatorMode.value = false;
+      isBuilding.value = false;
+      schedule.value = generatedSchedule.value;
+    };
+
+    watch(
+      () => props.initialData,
+      (value) => {
+        applyInitialData(value);
+      },
+      { immediate: true, deep: true }
+    );
+
     return {
       title,
       description,
@@ -372,6 +658,13 @@ export default defineComponent({
       classrooms,
       timeSlots,
       subjects,
+      generatedSchedule,
+      solverAssignments,
+      solverError,
+      isBuilding,
+      buildSuccess,
+      isBuildReady,
+      daysOfWeek,
       importFromSchoolsoft,
       importFromSkola24,
       addClass,
@@ -384,8 +677,8 @@ export default defineComponent({
       removeClassroom,
       removeTimeSlot,
       removeSubject,
-      canBuildSchedule,
-      buildSchedule,
+      buildWithSolver,
+      loadMockManualData,
       schoolsoftIcon,
       skola24Icon,
     };
@@ -507,6 +800,33 @@ export default defineComponent({
   font-weight: 600;
   color: #2d3748;
   margin: 0 0 1.5vh 0;
+}
+
+.section-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2vh;
+  margin-bottom: 1.5vh;
+}
+
+.mock-fill-btn {
+  padding: 0.9vh 1.8vh;
+  border: 0.1vh solid #dd6b20;
+  border-radius: 0.75vh;
+  background: #fffaf0;
+  color: #c05621;
+  font-size: 1.3vh;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mock-fill-btn:hover {
+  background: #fbd38d;
+  color: #9c4221;
+  border-color: #c05621;
+  box-shadow: 0 0.4vh 1.2vh rgba(221, 107, 32, 0.25);
 }
 
 .import-buttons {
@@ -691,6 +1011,11 @@ export default defineComponent({
   flex: 1;
 }
 
+.day-select {
+  max-width: 18vh;
+  cursor: pointer;
+}
+
 .time-separator {
   color: #718096;
   font-size: 1.4vh;
@@ -774,6 +1099,69 @@ export default defineComponent({
   color: #a0aec0;
   margin: 0;
   text-align: center;
+}
+
+.build-error {
+  margin: 0;
+  font-size: 1.3vh;
+  color: #e53e3e;
+  text-align: center;
+}
+
+.build-success {
+  margin: 0;
+  font-size: 1.3vh;
+  color: #38a169;
+  text-align: center;
+}
+
+.solver-assignments {
+  width: 100%;
+  margin-top: 2vh;
+  background: #f9fafb;
+  border: 0.1vh solid #e2e8f0;
+  border-radius: 1vh;
+  padding: 2vh;
+}
+
+.solver-title {
+  margin: 0 0 1.5vh 0;
+  font-size: 1.6vh;
+  font-weight: 600;
+  color: #2d3748;
+  text-align: center;
+}
+
+.solver-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2vh;
+}
+
+.solver-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3vh;
+  font-size: 1.3vh;
+  color: #4a5568;
+  text-align: center;
+}
+
+.solver-subject {
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.solver-meta {
+  color: #718096;
+}
+
+.solver-timeslot {
+  color: #4c51bf;
+  font-weight: 500;
 }
 
 .chat-toggle-btn {

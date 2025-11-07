@@ -90,6 +90,16 @@
                 </div>
               </div>
             </button>
+
+            <button class="import-btn mock-data-btn" @click="insertMockData">
+              <div class="btn-content">
+                <span class="btn-icon mock-icon">⭐</span>
+                <div class="btn-text-group">
+                  <span class="btn-title">Load Mock Data</span>
+                  <span class="btn-description">Try a demo dataset (Z3 ready)</span>
+                </div>
+              </div>
+            </button>
           </div>
         </div>
       </div>
@@ -126,6 +136,50 @@ export default defineComponent({
     const importFromSkola24 = () => {
       // TODO: Implement Skola24 import
       console.log('Import from Skola24 clicked');
+    };
+
+    const insertMockData = () => {
+      const mockPayload = {
+        classes: [
+          { name: 'Class A' },
+          { name: 'Class B' },
+          { name: 'Class C' },
+        ],
+        teachers: [
+          { name: 'Alice Andersson' },
+          { name: 'Björn Berg' },
+          { name: 'Carin Carlsson' },
+          { name: 'Dan Danielsson' },
+        ],
+        classrooms: [
+          { name: 'Room 101' },
+          { name: 'Room 202' },
+          { name: 'Lab 3' },
+        ],
+        subjects: [
+          { name: 'Mathematics' },
+          { name: 'Physics' },
+          { name: 'Biology' },
+          { name: 'Swedish' },
+          { name: 'English' },
+        ],
+        timeSlots: [
+          { day: 'Monday', start: '08:00', end: '09:00' },
+          { day: 'Monday', start: '09:15', end: '10:15' },
+          { day: 'Tuesday', start: '10:30', end: '11:30' },
+          { day: 'Wednesday', start: '13:00', end: '14:00' },
+          { day: 'Thursday', start: '08:30', end: '09:30' },
+          { day: 'Friday', start: '11:00', end: '12:00' },
+        ],
+      };
+
+      window.dispatchEvent(new CustomEvent('navigate', {
+        detail: {
+          page: 'viewer',
+          presetId: null,
+          mockData: mockPayload,
+        },
+      }));
     };
 
     const loadPresets = async () => {
@@ -268,6 +322,7 @@ export default defineComponent({
       goToHome,
       importFromSchoolsoft,
       importFromSkola24,
+      insertMockData,
       filterPresets,
       handleFocus,
       handleBlur,
@@ -674,5 +729,29 @@ export default defineComponent({
 
 .skola24-btn:hover .btn-title {
   color: #48bb78;
+}
+
+.mock-data-btn {
+  border-color: #f6ad55;
+}
+
+.mock-data-btn .btn-title {
+  color: #dd6b20;
+}
+
+.mock-data-btn:hover {
+  border-color: #dd6b20;
+  box-shadow: 0 0.4vh 1.5vh rgba(221, 107, 32, 0.25);
+}
+
+.mock-data-btn:hover .btn-title {
+  color: #c05621;
+}
+
+.mock-icon {
+  font-size: 2.2vh;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>

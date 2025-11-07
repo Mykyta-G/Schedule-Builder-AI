@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('api', {
     chat: (data) => ipcRenderer.invoke('chat', data),
     listSchedules: () => ipcRenderer.invoke('list-schedules'),
     readSchedule: (scheduleId) => ipcRenderer.invoke('read-schedule', scheduleId),
-    saveSchedule: (schedule) => ipcRenderer.invoke('save-schedule', schedule)
+    saveSchedule: (schedule) => ipcRenderer.invoke('save-schedule', schedule),
+    runScheduleSolver: (payload) => ipcRenderer.invoke('run-solver', payload),
 });
