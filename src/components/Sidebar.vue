@@ -46,7 +46,18 @@
       <h3 class="section-title">Kalender</h3>
       <div class="calendar">
         <div class="calendar-header">
-          <div class="calendar-month">{{ currentMonthName }} {{ currentYear }}</div>
+          <button class="calendar-nav-btn" @click="goToPreviousMonth" aria-label="Föregående månad">‹</button>
+          <div class="calendar-month" @click.stop>
+            <input
+              type="month"
+              :value="currentMonthValue"
+              @input="onMonthPickerChange"
+              class="calendar-month-picker"
+              aria-label="Välj månad"
+            />
+            <span>{{ currentMonthName }} {{ currentYear }}</span>
+          </div>
+          <button class="calendar-nav-btn" @click="goToNextMonth" aria-label="Nästa månad">›</button>
         </div>
         <div class="calendar-weekdays">
           <div
@@ -367,15 +378,20 @@ export default defineComponent({
 
     // Calendar
     const currentDate = ref(new Date());
-    const selectedScheduleDay = ref(null); // Day name like 'Monday', 'Tuesday', etc.
+    const selectedScheduleDay = ref(null);
     const selectedCalendarDate = ref(null); // Date object for the selected day
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
     
-    const currentMonthName = computed(() => {
-      const months = [
-        'Januari', 'Februari', 'Mars', 'April', 'Maj', 'Juni',
-        'Juli', 'Augusti', 'September', 'Oktober', 'November', 'December'
-      ];
-      return months[currentDate.value.getMonth()];
+    const months = [
+      'Januari', 'Februari', 'Mars', 'April', 'Maj', 'Juni',
+      'Juli', 'Augusti', 'September', 'Oktober', 'November', 'December'
+    ];
+
+    const currentMonthName = computed(() => months[currentDate.value.getMonth()]);
+    const currentMonthValue = computed(() => {
+      const year = currentDate.value.getFullYear();
+      const month = String(currentDate.value.getMonth() + 1).padStart(2, '0');
+      return `${year}-${month}`;
     });
     const currentYear = computed(() => currentDate.value.getFullYear());
     const weekdays = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
@@ -393,6 +409,10 @@ export default defineComponent({
 
     // Get date for a given day name in current week
     const getDateForDayName = (dayName) => {
+      if (isoDateRegex.test(dayName)) {
+        const parsed = new Date(`${dayName}T00:00:00`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
       const today = new Date();
       const dayIndex = dayNameToIndex[dayName];
       if (dayIndex === undefined) return null;
@@ -1204,40 +1224,70 @@ export default defineComponent({
     };
 
     // Select day from calendar and sync with SimpleSchedule
+    const toIsoKey = (dateObj) => {
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
     const selectCalendarDay = (dayInfo) => {
       if (dayInfo.otherMonth) return; // Don't select days from other months
       
       selectedCalendarDate.value = dayInfo.date;
-      
-      // Map calendar date to day name
+      const isoKey = toIsoKey(dayInfo.date);
       const dayIndex = dayInfo.date.getDay();
       const dayNameMap = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       const dayName = dayNameMap[dayIndex];
-      
-      // Only update if it's a weekday (Monday-Friday)
-      const weekdayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-      if (weekdayNames.includes(dayName)) {
-        selectedScheduleDay.value = dayName;
-        // Emit event to SimpleSchedule to select this day
-        window.dispatchEvent(new CustomEvent('schedule-select-day', { 
-          detail: { day: dayName } 
-        }));
-      }
+
+      selectedScheduleDay.value = isoKey;
+      window.dispatchEvent(new CustomEvent('schedule-select-day', {
+        detail: { day: isoKey, dayName },
+      }));
     };
 
     // Listen for day selection from SimpleSchedule
     const handleScheduleDaySelect = (event) => {
-      const dayName = event.detail?.day;
-      if (dayName && dayName !== selectedScheduleDay.value) {
-        selectedScheduleDay.value = dayName;
-        const dateForDay = getDateForDayName(dayName);
-        if (dateForDay) {
-          selectedCalendarDate.value = dateForDay;
-          // If the selected day is in a different month, update currentDate
-          if (dateForDay.getMonth() !== currentDate.value.getMonth()) {
-            currentDate.value = new Date(dateForDay);
-          }
+      const dayKey = event.detail?.day;
+      const fallbackName = event.detail?.dayName;
+
+      if (!dayKey) return;
+      selectedScheduleDay.value = dayKey;
+
+      let dateForDay = getDateForDayName(dayKey);
+      if (!dateForDay && fallbackName) {
+        dateForDay = getDateForDayName(fallbackName);
+      }
+
+      if (dateForDay) {
+        selectedCalendarDate.value = dateForDay;
+        if (
+          dateForDay.getMonth() !== currentDate.value.getMonth() ||
+          dateForDay.getFullYear() !== currentDate.value.getFullYear()
+        ) {
+          currentDate.value = new Date(dateForDay);
         }
+      }
+    };
+
+    const goToPreviousMonth = () => {
+      const newDate = new Date(currentDate.value);
+      newDate.setMonth(newDate.getMonth() - 1);
+      currentDate.value = newDate;
+    };
+
+    const goToNextMonth = () => {
+      const newDate = new Date(currentDate.value);
+      newDate.setMonth(newDate.getMonth() + 1);
+      currentDate.value = newDate;
+    };
+
+    const onMonthPickerChange = (event) => {
+      const [year, month] = (event.target.value || '').split('-').map((v) => parseInt(v, 10));
+      if (Number.isInteger(year) && Number.isInteger(month)) {
+        const newDate = new Date(currentDate.value);
+        newDate.setFullYear(year, month - 1, 1);
+        currentDate.value = newDate;
       }
     };
 
@@ -1300,9 +1350,13 @@ export default defineComponent({
       highlightedBlockId,
       blocksListRef,
       currentMonthName,
+      currentMonthValue,
       currentYear,
       weekdays,
       calendarDays,
+      goToPreviousMonth,
+      goToNextMonth,
+      onMonthPickerChange,
       canCreateBlock,
       navigateTo,
       createBlock,
@@ -1867,15 +1921,49 @@ export default defineComponent({
 
 .calendar-header {
   margin-bottom: 12px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .calendar-month {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   font-weight: 600;
   color: #1a1a1a;
 }
 
+.calendar-month-picker {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+.calendar-nav-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #1a1a1a;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.calendar-nav-btn:hover {
+  background: #ede9fe;
+  color: #7c3aed;
+}
 .calendar-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);

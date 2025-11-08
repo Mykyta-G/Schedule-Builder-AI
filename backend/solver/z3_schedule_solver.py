@@ -28,6 +28,7 @@ SimpleSchedule.vue.
 
 import json
 import sys
+from datetime import datetime
 from typing import Any, Dict, List
 
 try:
@@ -72,6 +73,25 @@ def _parse_minutes(value: str) -> int:
 
 
 def _normalize_entities(data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    weekend_aliases = {
+        "sat": "Saturday",
+        "saturday": "Saturday",
+        "sun": "Sunday",
+        "sunday": "Sunday",
+    }
+
+    def is_weekend(day_value: str) -> bool:
+        normalized = (day_value or "").strip().lower()
+        mapped = weekend_aliases.get(normalized)
+        if mapped:
+            return mapped in {"Saturday", "Sunday"}
+        if len(normalized) == 10 and normalized[4] == "-" and normalized[7] == "-":
+            try:
+                parsed = datetime.strptime(normalized, "%Y-%m-%d")
+                return parsed.weekday() >= 5
+            except ValueError:
+                return False
+        return normalized in {"saturday", "sunday"}
     classes = [_extract_name(item) for item in data.get("classes", [])]
     teachers = [_extract_name(item) for item in data.get("teachers", [])]
     classrooms = [_extract_name(item) for item in data.get("classrooms", [])]
@@ -88,10 +108,15 @@ def _normalize_entities(data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]
             day = slot.get("day")
             if not isinstance(day, str):
                 day = "Monday"
+            else:
+                if is_weekend(day):
+                    continue
         elif isinstance(slot, list) and len(slot) >= 2:
             start, end = slot[:2]
             day = slot[2] if len(slot) > 2 else "Monday"
             if not (isinstance(start, str) and isinstance(end, str)):
+                continue
+            if is_weekend(str(day)):
                 continue
         else:
             continue

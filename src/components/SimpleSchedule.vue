@@ -182,15 +182,52 @@ export default defineComponent({
     const pixelsPerMinute = pixelsPerHour / 60;
 
     // Display days based on view mode
+    const msPerDay = 24 * 60 * 60 * 1000;
+
+    const toIsoKey = (dateObj) => {
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
     const displayDays = computed(() => {
+      const allDays = days.value;
       if (viewMode.value === 'week') {
-        if (days.value.length <= 7) {
-          return days.value;
+        if (!allDays.length) return [];
+        const currentSelection = selectedDay.value || allDays[0];
+        const parsedSelected = parseIsoDate(currentSelection);
+        if (parsedSelected) {
+          const monday = new Date(parsedSelected);
+          const dayIndex = monday.getDay();
+          const diff = dayIndex === 0 ? -6 : 1 - dayIndex; // align to Monday
+          monday.setDate(monday.getDate() + diff);
+
+          const weekKeys = Array.from({ length: 5 }).map((_, idx) => {
+            const dayDate = new Date(monday.getTime() + idx * msPerDay);
+            return toIsoKey(dayDate);
+          });
+
+          ensureDayBuckets(weekKeys);
+
+          // Ensure schedules buckets exist even if not in incoming data
+          weekKeys.forEach((key) => {
+            if (!schedules[key]) {
+              schedules[key] = [];
+            }
+          });
+
+          return weekKeys;
         }
-        const selectedIndex = Math.max(days.value.indexOf(selectedDay.value), 0);
-        const windowStart = Math.max(0, selectedIndex - 3);
-        const windowEnd = Math.min(days.value.length, windowStart + 7);
-        return days.value.slice(windowStart, windowEnd);
+
+        // Fallback for non-ISO day names
+        const weekdayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+        const filtered = allDays.filter((day) => weekdayOrder.includes(day));
+        if (filtered.length > 0) {
+          return filtered;
+        }
+
+        return allDays.slice(0, Math.min(5, allDays.length));
       }
       return [selectedDay.value];
     });
@@ -203,6 +240,28 @@ export default defineComponent({
       if (typeof value !== 'string' || !isoDateRegex.test(value)) return null;
       const parsed = new Date(`${value}T00:00:00`);
       return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const getEventDayName = (day) => {
+      const parsed = parseIsoDate(day);
+      if (parsed) {
+        return parsed.toLocaleDateString(undefined, { weekday: 'long' });
+      }
+      return day;
+    };
+
+    const isWeekendKey = (day) => {
+      const normalized = (day || '').trim().toLowerCase();
+      if (normalized === 'saturday' || normalized === 'sunday') return true;
+      if (normalized === 'mon' || normalized === 'tue' || normalized === 'wed' || normalized === 'thu' || normalized === 'fri') {
+        return false;
+      }
+      const parsed = parseIsoDate(normalized);
+      if (parsed) {
+        const dayNum = parsed.getDay();
+        return dayNum === 0 || dayNum === 6;
+      }
+      return false;
     };
 
     const compareDayKeys = (a, b) => {
@@ -230,6 +289,10 @@ export default defineComponent({
       return {
         id: baseId,
         name: entry?.name || '',
+        subject: entry?.subject || entry?.name || '',
+        classRef: entry?.classRef || entry?.class || entry?.className || '',
+        teacher: entry?.teacher || '',
+        classroom: entry?.classroom || '',
         startMinutes: typeof entry?.startMinutes === 'number' ? entry.startMinutes : startHour * 60,
         duration: typeof entry?.duration === 'number' ? entry.duration : 60,
         colorIndex: entry?.colorIndex,
@@ -242,6 +305,10 @@ export default defineComponent({
         payload[d] = schedules[d].map((i) => ({
           id: i.id,
           name: i.name,
+          subject: i.subject,
+          classRef: i.classRef,
+          teacher: i.teacher,
+          classroom: i.classroom,
           startMinutes: i.startMinutes,
           duration: i.duration,
         }));
@@ -255,11 +322,11 @@ export default defineComponent({
       }
 
       const incomingKeys = Array.from(new Set(Object.keys(incoming)));
-      const combinedDays = Array.from(new Set([...(days.value || []), ...incomingKeys]));
-      combinedDays.sort(compareDayKeys);
+    const combinedDays = Array.from(new Set([...(days.value || []), ...incomingKeys]));
+    combinedDays.sort(compareDayKeys);
 
-      const filteredDays = combinedDays.filter((day) => incomingKeys.includes(day) || parseIsoDate(day));
-      days.value = filteredDays.length > 0 ? filteredDays : combinedDays;
+    const filteredDays = combinedDays.filter((day) => !isWeekendKey(day));
+    days.value = filteredDays.length > 0 ? filteredDays : combinedDays.filter((day) => !isWeekendKey(day));
       ensureDayBuckets(days.value);
 
       const fallbackBase = Date.now();
@@ -270,10 +337,6 @@ export default defineComponent({
 
       if (!days.value.includes(selectedDay.value)) {
         selectedDay.value = days.value[0] || selectedDay.value;
-      }
-
-      if (days.value.length > 7) {
-        viewMode.value = 'day';
       }
 
       emitChange();
@@ -446,15 +509,30 @@ export default defineComponent({
       }
       // Emit event for Sidebar calendar sync
       window.dispatchEvent(new CustomEvent('schedule-day-selected', { 
-        detail: { day } 
+        detail: { day, dayName: getEventDayName(day) } 
       }));
     };
 
     // Listen for day selection from Sidebar calendar
     const handleCalendarDaySelect = (event) => {
-      const dayName = event.detail?.day;
-      if (dayName && days.value.includes(dayName)) {
-        selectedDay.value = dayName;
+      const dayKey = event.detail?.day;
+      const fallbackName = event.detail?.dayName;
+
+      if (dayKey && days.value.includes(dayKey)) {
+        selectedDay.value = dayKey;
+      } else if (fallbackName && days.value.includes(fallbackName)) {
+        selectedDay.value = fallbackName;
+      }
+    };
+
+    const handleExternalViewChange = (event) => {
+      const mode = event.detail?.view;
+      if (mode === 'week' || mode === 'day') {
+        viewMode.value = mode;
+      }
+      const targetDay = event.detail?.day;
+      if (targetDay && days.value.includes(targetDay)) {
+        selectedDay.value = targetDay;
       }
     };
 
@@ -649,6 +727,7 @@ export default defineComponent({
       window.addEventListener('mouseup', stopResize);
       // Listen for day selection from Sidebar calendar
       window.addEventListener('schedule-select-day', handleCalendarDaySelect);
+      window.addEventListener('schedule-set-view', handleExternalViewChange);
       // Close expanded item when clicking outside
       document.addEventListener('click', (e) => {
         if (!e.target.closest('.scheduled-item')) {
@@ -658,7 +737,7 @@ export default defineComponent({
       // Emit initial selected day to sync with Sidebar calendar
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('schedule-day-selected', { 
-          detail: { day: selectedDay.value } 
+          detail: { day: selectedDay.value, dayName: getEventDayName(selectedDay.value) } 
         }));
       }, 50);
     });
@@ -667,6 +746,7 @@ export default defineComponent({
       window.removeEventListener('mousemove', handleResize);
       window.removeEventListener('mouseup', stopResize);
       window.removeEventListener('schedule-select-day', handleCalendarDaySelect);
+      window.removeEventListener('schedule-set-view', handleExternalViewChange);
     });
 
     watch(

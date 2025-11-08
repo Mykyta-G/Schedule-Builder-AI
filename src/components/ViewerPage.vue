@@ -204,10 +204,10 @@
               </p>
               <p v-if="solverError" class="build-error">{{ solverError }}</p>
               <p v-else-if="buildSuccess" class="build-success">Schedule generated! Switched to viewer mode.</p>
-              <div v-if="solverAssignments.length" class="solver-assignments">
+              <div v-if="visibleAssignments.length" class="solver-assignments">
                 <h4 class="solver-title">Generated Assignments</h4>
                 <ul class="solver-list">
-                  <li v-for="(assignment, index) in solverAssignments" :key="index" class="solver-item">
+                  <li v-for="(assignment, index) in visibleAssignments" :key="index" class="solver-item">
                     <span class="solver-subject">{{ assignment.subject }}</span>
                     <span class="solver-meta">
                       {{ assignment.class }} · {{ assignment.teacher }} · {{ assignment.classroom }}
@@ -223,8 +223,21 @@
         </div>
 
         <!-- Viewer Mode: Schedule Visualization -->
-        <div v-else>
-          <SimpleSchedule @change="onScheduleChange" :external-schedule="generatedSchedule" />
+        <div v-else class="viewer-mode">
+          <div class="viewer-toolbar">
+            <label class="filter-group">
+              <span class="filter-label">Class</span>
+              <select v-model="selectedClassFilter" class="filter-select">
+                <option v-for="option in classFilterOptions" :key="option" :value="option">
+                  {{ option }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <SimpleSchedule
+            @change="onScheduleChange"
+            :external-schedule="displayedSchedule || {}"
+          />
         </div>
       </div>
       <button 
@@ -281,6 +294,37 @@ export default defineComponent({
     const buildSuccess = ref(false);
     const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
     const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const selectedClassFilter = ref('All Classes');
+
+    const isIsoDayKey = (value) => isoDateRegex.test((value || '').trim());
+
+    const toIsoDate = (value) => {
+      const trimmed = (value || '').trim();
+      if (!isIsoDayKey(trimmed)) return null;
+      const parsed = new Date(`${trimmed}T00:00:00`);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const getDayNameFromKey = (key) => {
+      const parsed = toIsoDate(key);
+      if (parsed) {
+        return parsed.toLocaleDateString(undefined, { weekday: 'long' });
+      }
+      return key;
+    };
+
+    const isWeekendKey = (value) => {
+      const normalized = (value || '').trim().toLowerCase();
+      if (normalized === 'saturday' || normalized === 'sunday') return true;
+      if (normalized === 'mon' || normalized === 'tue' || normalized === 'wed' || normalized === 'thu' || normalized === 'fri') {
+        return false;
+      }
+      if (isIsoDayKey(normalized)) {
+        const parsed = new Date(`${normalized}T00:00:00`);
+        return Number.isNaN(parsed.getTime()) ? false : parsed.getDay() === 0 || parsed.getDay() === 6;
+      }
+      return false;
+    };
 
     const resetSolverState = () => {
       generatedSchedule.value = null;
@@ -308,6 +352,7 @@ export default defineComponent({
             day: (() => {
               const trimmed = (slot?.day || '').trim();
               if (!trimmed) return daysOfWeek[0];
+              if (isWeekendKey(trimmed)) return null;
               if (daysOfWeek.includes(trimmed) || isoDateRegex.test(trimmed)) {
                 return trimmed;
               }
@@ -316,7 +361,7 @@ export default defineComponent({
             start: (slot?.start || '').trim(),
             end: (slot?.end || '').trim(),
           }))
-          .filter((slot) => slot.start && slot.end);
+          .filter((slot) => slot.day && slot.start && slot.end);
       };
 
       classes.value = sanitizeEntities(data.classes);
@@ -327,6 +372,7 @@ export default defineComponent({
 
       isCreatorMode.value = true;
       resetSolverState();
+      selectedClassFilter.value = 'All Classes';
     };
 
     const normalizeScheduleResult = (scheduleByDay = {}) => {
@@ -335,14 +381,28 @@ export default defineComponent({
       const fallbackBase = Date.now();
 
       Object.keys(scheduleByDay || {}).forEach((dayKey) => {
+        if (isWeekendKey(dayKey)) {
+          return;
+        }
         const entries = Array.isArray(scheduleByDay[dayKey]) ? scheduleByDay[dayKey] : [];
-        normalized[dayKey] = entries.map((entry, index) => ({
-          id: typeof entry?.id === 'number' ? entry.id : fallbackBase + index,
-          name: entry?.name || '',
-          startMinutes: typeof entry?.startMinutes === 'number' ? entry.startMinutes : 8 * 60,
-          duration: typeof entry?.duration === 'number' ? entry.duration : 60,
-          colorIndex: entry?.colorIndex,
-        }));
+        normalized[dayKey] = entries.map((entry, index) => {
+          const name = entry?.name || '';
+          const subject = entry?.subject || name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+          const classMatch = /\(([^)]+)\)/.exec(name);
+          const classRef = entry?.class || entry?.className || entry?.classRef || (classMatch ? classMatch[1] : '');
+
+          return {
+            id: typeof entry?.id === 'number' ? entry.id : fallbackBase + index,
+            name,
+            subject,
+            classRef,
+            teacher: entry?.teacher || '',
+            classroom: entry?.classroom || '',
+            startMinutes: typeof entry?.startMinutes === 'number' ? entry.startMinutes : 8 * 60,
+            duration: typeof entry?.duration === 'number' ? entry.duration : 60,
+            colorIndex: entry?.colorIndex,
+          };
+        });
         processedDays.add(dayKey);
       });
 
@@ -497,6 +557,7 @@ export default defineComponent({
         solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
         buildSuccess.value = true;
         isCreatorMode.value = false;
+        selectedClassFilter.value = 'All Classes';
       } catch (error) {
         solverError.value = error?.message || 'Failed to build schedule with Z3 solver.';
       } finally {
@@ -539,7 +600,9 @@ export default defineComponent({
         const weekStart = new Date(startDate);
         weekStart.setDate(weekStart.getDate() + week * 7);
 
-        for (const template of templates) {
+        const weekTemplates = templates.map((_, idx) => templates[(idx + week) % templates.length]);
+
+        for (const template of weekTemplates) {
           const eventDate = new Date(weekStart);
           eventDate.setDate(eventDate.getDate() + template.dayOffset);
 
@@ -547,7 +610,7 @@ export default defineComponent({
             continue;
           }
 
-          const dayKey = eventDate.toISOString().slice(0, 10);
+          const dayKey = `${eventDate.getFullYear()}-${padNumber(eventDate.getMonth() + 1)}-${padNumber(eventDate.getDate())}`;
 
           if (!scheduleByDay[dayKey]) {
             scheduleByDay[dayKey] = [];
@@ -634,17 +697,131 @@ export default defineComponent({
       isCreatorMode.value = false;
       isBuilding.value = false;
       schedule.value = generatedSchedule.value;
+      selectedClassFilter.value = 'All Classes';
     };
+
+    const classFilterOptions = computed(() => {
+      const unique = new Set();
+      classes.value.forEach((item) => {
+        const className = item?.name?.trim();
+        if (className) unique.add(className);
+      });
+      solverAssignments.value.forEach((assignment) => {
+        const className = assignment?.class?.trim();
+        if (className) unique.add(className);
+      });
+      if (generatedSchedule.value) {
+        Object.values(generatedSchedule.value).forEach((dayEntries) => {
+          dayEntries.forEach((entry) => {
+            const className = entry?.classRef?.trim();
+            if (className) unique.add(className);
+          });
+        });
+      }
+      const sorted = Array.from(unique).sort();
+      return ['All Classes', ...sorted];
+    });
+
+    const filteredSchedule = computed(() => {
+      if (!generatedSchedule.value) {
+        return null;
+      }
+      if (selectedClassFilter.value === 'All Classes') {
+        return generatedSchedule.value;
+      }
+      const result = {};
+      Object.keys(generatedSchedule.value).forEach((dayKey) => {
+        const entries = (generatedSchedule.value[dayKey] || []).filter(
+          (entry) => (entry.classRef || '') === selectedClassFilter.value,
+        );
+        result[dayKey] = entries;
+      });
+      return result;
+    });
+
+    watch(classFilterOptions, (options) => {
+      if (!options.includes(selectedClassFilter.value)) {
+        selectedClassFilter.value = 'All Classes';
+      }
+    });
+
+    const displayedSchedule = computed(() => filteredSchedule.value || generatedSchedule.value);
+
+    const findFirstDayKey = (scheduleObject) => {
+      if (!scheduleObject) return null;
+      const dayKeys = Object.keys(scheduleObject);
+      if (dayKeys.length === 0) return null;
+      const firstWithEntries = dayKeys.find((day) => (scheduleObject[day] || []).length > 0);
+      return firstWithEntries || dayKeys[0];
+    };
+
+    const setWeekView = (dayKey = null) => {
+      window.dispatchEvent(new CustomEvent('schedule-set-view', {
+        detail: {
+          view: 'week',
+          day: dayKey,
+        },
+      }));
+    };
+
+    const ensureCalendarSync = (scheduleObject) => {
+      const dayKey = findFirstDayKey(scheduleObject);
+      if (!dayKey) return;
+      window.dispatchEvent(new CustomEvent('schedule-select-day', {
+        detail: {
+          day: dayKey,
+          dayName: getDayNameFromKey(dayKey),
+        },
+      }));
+      setWeekView(dayKey);
+    };
+
+    watch(displayedSchedule, (value) => {
+      if (value) {
+        schedule.value = value;
+      }
+    }, { immediate: true });
+
+    watch(selectedClassFilter, () => {
+      ensureCalendarSync(displayedSchedule.value);
+    });
+
+    const selectedDay = computed({
+      get: () => Object.keys(displayedSchedule.value || {})[0] || null,
+      set: (value) => {
+        if (!value) return;
+        const dayKeys = Object.keys(displayedSchedule.value || {});
+        // Remove weekends automatically when switching classes
+        const weekdayKeys = dayKeys.filter((key) => !isWeekendKey(key));
+        if (!weekdayKeys.includes(value)) {
+          const fallback = findFirstDayKey(displayedSchedule.value);
+          if (fallback) {
+            ensureCalendarSync({ [fallback]: displayedSchedule.value[fallback] });
+          }
+        }
+      },
+    });
+
+    const visibleAssignments = computed(() => {
+      if (selectedClassFilter.value === 'All Classes') {
+        return solverAssignments.value;
+      }
+      return solverAssignments.value.filter(
+        (assignment) => (assignment?.class || '').trim() === selectedClassFilter.value,
+      );
+    });
 
     watch(
       () => props.initialData,
       (value) => {
         applyInitialData(value);
+        ensureCalendarSync(displayedSchedule.value);
       },
       { immediate: true, deep: true }
     );
 
     return {
+      selectedDay,
       title,
       description,
       goToHome,
@@ -659,11 +836,16 @@ export default defineComponent({
       timeSlots,
       subjects,
       generatedSchedule,
+      filteredSchedule,
+      displayedSchedule,
       solverAssignments,
+      visibleAssignments,
       solverError,
       isBuilding,
       buildSuccess,
       isBuildReady,
+      classFilterOptions,
+      selectedClassFilter,
       daysOfWeek,
       importFromSchoolsoft,
       importFromSkola24,
@@ -1162,6 +1344,51 @@ export default defineComponent({
 .solver-timeslot {
   color: #4c51bf;
   font-weight: 500;
+}
+
+.viewer-mode {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 1.5vh 2vh;
+  border-bottom: 0.1vh solid #f0f0f0;
+  background: #fff;
+  gap: 1.5vh;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 1vh;
+  font-size: 1.4vh;
+  color: #4a5568;
+}
+
+.filter-label {
+  font-weight: 600;
+}
+
+.filter-select {
+  padding: 0.8vh 1.5vh;
+  border: 0.1vh solid #d1d5db;
+  border-radius: 0.6vh;
+  font-size: 1.4vh;
+  color: #2d3748;
+  background: #fff;
+  cursor: pointer;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 0.2vh rgba(102, 126, 234, 0.25);
 }
 
 .chat-toggle-btn {
