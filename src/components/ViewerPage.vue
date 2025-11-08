@@ -565,139 +565,112 @@ export default defineComponent({
       }
     };
 
-    const padNumber = (value) => value.toString().padStart(2, '0');
-
-    const minutesToClock = (minutes) => {
-      const hours = Math.floor(minutes / 60);
-      const mins = minutes % 60;
-      return `${padNumber(hours)}:${padNumber(mins)}`;
-    };
-
-    const generateSixMonthSchedule = () => {
-      const scheduleByDay = {};
-      const assignmentsList = [];
-
-      const now = new Date();
-      const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      const weekday = (startDate.getDay() + 6) % 7; // 0 = Monday
-      startDate.setDate(startDate.getDate() - weekday);
-
-      const sixMonthsLater = new Date(startDate);
-      sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);
-
-      const templates = [
-        { dayOffset: 0, subject: 'Mathematics', className: 'Class A', teacher: 'Alice Andersson', classroom: 'Room 101', startMinutes: 8 * 60, duration: 60 },
-        { dayOffset: 0, subject: 'English', className: 'Class B', teacher: 'Björn Berg', classroom: 'Room 202', startMinutes: 9 * 60 + 15, duration: 60 },
-        { dayOffset: 1, subject: 'Physics', className: 'Class C', teacher: 'Carin Carlsson', classroom: 'Lab 3', startMinutes: 8 * 60, duration: 60 },
-        { dayOffset: 2, subject: 'Biology', className: 'Class A', teacher: 'Dan Danielsson', classroom: 'Lab 3', startMinutes: 10 * 60, duration: 60 },
-        { dayOffset: 3, subject: 'Swedish', className: 'Class B', teacher: 'Alice Andersson', classroom: 'Room 101', startMinutes: 8 * 60 + 30, duration: 60 },
-        { dayOffset: 4, subject: 'History', className: 'Class C', teacher: 'Björn Berg', classroom: 'Room 202', startMinutes: 9 * 60, duration: 60 },
+    const createMockAutumnTermPayload = () => {
+      const classesList = [
+        { name: '7A' },
+        { name: '7B' },
       ];
 
-      let eventCounter = 0;
+      const teachersList = [
+        { name: 'Anna Larsson' },
+        { name: 'Björn Svensson' },
+        { name: 'Carina Holm' },
+        { name: 'David Ek' },
+        { name: 'Eva Lind' },
+        { name: 'Fredrik Berg' },
+        { name: 'Gisela Nyberg' },
+      ];
 
-      for (let week = 0; week < 26; week += 1) {
-        const weekStart = new Date(startDate);
-        weekStart.setDate(weekStart.getDate() + week * 7);
+      const classroomsList = [
+        { name: 'Matte 201' },
+        { name: 'Svenska 105' },
+        { name: 'Engelska 110' },
+        { name: 'NO-lab 2' },
+        { name: 'SO-sal 3' },
+        { name: 'Gympasalen' },
+        { name: 'Bildsalen' },
+      ];
 
-        const weekTemplates = templates.map((_, idx) => templates[(idx + week) % templates.length]);
+      const subjectsList = [
+        { name: 'Matematik' },
+        { name: 'Svenska' },
+        { name: 'Engelska' },
+        { name: 'Naturkunskap' },
+        { name: 'Samhällskunskap' },
+        { name: 'Idrott' },
+        { name: 'Bild' },
+      ];
 
-        for (const template of weekTemplates) {
-          const eventDate = new Date(weekStart);
-          eventDate.setDate(eventDate.getDate() + template.dayOffset);
+      const lessonTemplates = [
+        { subject: 'Matematik', class: '7A', teacher: 'Anna Larsson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Matte 201' },
+        { subject: 'Svenska', class: '7A', teacher: 'Björn Svensson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Svenska 105' },
+        { subject: 'Engelska', class: '7A', teacher: 'Carina Holm', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'Engelska 110' },
+        { subject: 'Naturkunskap', class: '7A', teacher: 'David Ek', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'NO-lab 2' },
+        { subject: 'Samhällskunskap', class: '7A', teacher: 'Eva Lind', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'SO-sal 3' },
+        { subject: 'Idrott', class: '7A', teacher: 'Fredrik Berg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Gympasalen' },
+        { subject: 'Bild', class: '7A', teacher: 'Gisela Nyberg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Bildsalen' },
 
-          if (eventDate >= sixMonthsLater) {
-            continue;
-          }
+        { subject: 'Matematik', class: '7B', teacher: 'Anna Larsson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Matte 201' },
+        { subject: 'Svenska', class: '7B', teacher: 'Björn Svensson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Svenska 105' },
+        { subject: 'Engelska', class: '7B', teacher: 'Carina Holm', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'Engelska 110' },
+        { subject: 'Naturkunskap', class: '7B', teacher: 'David Ek', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'NO-lab 2' },
+        { subject: 'Samhällskunskap', class: '7B', teacher: 'Eva Lind', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'SO-sal 3' },
+        { subject: 'Idrott', class: '7B', teacher: 'Fredrik Berg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Gympasalen' },
+        { subject: 'Bild', class: '7B', teacher: 'Gisela Nyberg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Bildsalen' },
+      ];
 
-          const dayKey = `${eventDate.getFullYear()}-${padNumber(eventDate.getMonth() + 1)}-${padNumber(eventDate.getDate())}`;
-
-          if (!scheduleByDay[dayKey]) {
-            scheduleByDay[dayKey] = [];
-          }
-
-          const eventId = eventDate.getTime() + eventCounter;
-          const startMinutes = template.startMinutes;
-          const duration = template.duration;
-
-          scheduleByDay[dayKey].push({
-            id: eventId,
-            name: `${template.subject} (${template.className})`,
-            startMinutes,
-            duration,
-            colorIndex: template.dayOffset % 5,
-          });
-
-          assignmentsList.push({
-            subject: template.subject,
-            class: template.className,
-            teacher: template.teacher,
-            classroom: template.classroom,
-            timeSlot: {
-              day: dayKey,
-              start: minutesToClock(startMinutes),
-              end: minutesToClock(startMinutes + duration),
-            },
-          });
-
-          eventCounter += 1;
-        }
-      }
-
-      Object.keys(scheduleByDay).forEach((dayKey) => {
-        scheduleByDay[dayKey].sort((a, b) => a.startMinutes - b.startMinutes);
-      });
-
-      return { scheduleByDay, assignments: assignmentsList };
+      return {
+        term: {
+          name: 'Höstterminen 2025 – Vecka 34-35',
+          startDate: '2025-08-18',
+          weeks: 2,
+          days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+          dailySlots: [
+            { start: '08:30', end: '09:30' },
+            { start: '09:45', end: '10:45' },
+            { start: '11:00', end: '12:00' },
+            { start: '12:45', end: '13:45' },
+            { start: '14:00', end: '15:00' },
+            { start: '15:15', end: '16:15' },
+          ],
+        },
+        classes: classesList,
+        teachers: teachersList,
+        classrooms: classroomsList,
+        subjects: subjectsList,
+        timeSlots: [],
+        lessonTemplates,
+      };
     };
 
-    const loadMockManualData = () => {
-      const mockPayload = {
-        classes: [
-          { name: 'Class A' },
-          { name: 'Class B' },
-          { name: 'Class C' },
-        ],
-        teachers: [
-          { name: 'Alice Andersson' },
-          { name: 'Björn Berg' },
-          { name: 'Carin Carlsson' },
-          { name: 'Dan Danielsson' },
-        ],
-        classrooms: [
-          { name: 'Room 101' },
-          { name: 'Room 202' },
-          { name: 'Lab 3' },
-        ],
-        subjects: [
-          { name: 'Mathematics' },
-          { name: 'Physics' },
-          { name: 'Biology' },
-          { name: 'Swedish' },
-          { name: 'English' },
-          { name: 'History' },
-        ],
-        timeSlots: [
-          { day: 'Monday', start: '08:00', end: '09:00' },
-          { day: 'Monday', start: '09:15', end: '10:15' },
-          { day: 'Tuesday', start: '08:30', end: '09:30' },
-          { day: 'Wednesday', start: '10:00', end: '11:00' },
-          { day: 'Thursday', start: '08:30', end: '09:30' },
-          { day: 'Friday', start: '09:00', end: '10:00' },
-        ],
-      };
+    const loadMockManualData = async () => {
+      solverError.value = null;
+      buildSuccess.value = false;
 
+      const mockPayload = createMockAutumnTermPayload();
       applyInitialData(mockPayload);
 
-      const { scheduleByDay, assignments } = generateSixMonthSchedule();
-      generatedSchedule.value = normalizeScheduleResult(scheduleByDay);
-      solverAssignments.value = assignments;
-      solverError.value = null;
-      buildSuccess.value = true;
-      isCreatorMode.value = false;
-      isBuilding.value = false;
-      schedule.value = generatedSchedule.value;
-      selectedClassFilter.value = 'All Classes';
+      if (!window.api || !window.api.runScheduleSolver) {
+        solverError.value = 'Solver API is not available in this environment.';
+        return;
+      }
+
+      isBuilding.value = true;
+
+      try {
+        const response = await window.api.runScheduleSolver(mockPayload);
+        generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
+        solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
+        schedule.value = generatedSchedule.value;
+        buildSuccess.value = true;
+        solverError.value = null;
+        isCreatorMode.value = false;
+        selectedClassFilter.value = 'All Classes';
+      } catch (error) {
+        solverError.value = error?.message || 'Failed to load the mock schedule.';
+      } finally {
+        isBuilding.value = false;
+      }
     };
 
     const classFilterOptions = computed(() => {
