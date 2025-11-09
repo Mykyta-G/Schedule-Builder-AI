@@ -20,7 +20,13 @@
       </div>
     </div>
     <div class="viewer-layout">
-      <Sidebar :initial-preset-id="presetId" v-if="!isCreatorMode" />
+      <Sidebar
+        v-if="!isCreatorMode"
+        :initial-preset-id="presetId"
+        :selected-day="selectedDayKey"
+        :available-days="availableScheduleDays"
+        @select-day="handleSidebarSelectDay"
+      />
       <div class="schedule-section" :class="{ 'creator-mode': isCreatorMode }">
         <!-- Creator Mode: Form Builder -->
         <div v-if="isCreatorMode" class="creator-content">
@@ -237,6 +243,8 @@
           <SimpleSchedule
             @change="onScheduleChange"
             :external-schedule="displayedSchedule || {}"
+            :selected-day-key="selectedDayKey"
+            @update:selectedDayKey="handleScheduleSelectedDay"
           />
         </div>
       </div>
@@ -252,11 +260,29 @@
         <ChatWindow />
       </div>
     </div>
+    <div v-if="isLoadingScreenVisible" class="solver-loading-overlay">
+      <div class="loading-card">
+        <div class="loading-header">
+          <span class="loading-icon">⚙</span>
+          <h2 class="loading-title">Building your schedule</h2>
+        </div>
+        <p class="loading-subtitle">
+          Optimizing lessons with Skolverkets constraints. This usually takes just a moment.
+        </p>
+        <div class="progress-container">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="progressStyle"></div>
+          </div>
+          <span class="progress-value">{{ progressDisplay }}%</span>
+        </div>
+        <p class="loading-hint">Checking teacher, classroom, and class availability…</p>
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
-import { defineComponent, ref, computed, watch } from 'vue';
+import { defineComponent, ref, computed, watch, onUnmounted } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
 import Sidebar from './Sidebar.vue';
@@ -295,6 +321,16 @@ export default defineComponent({
     const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
     const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
     const selectedClassFilter = ref('All Classes');
+    const selectedDayKey = ref(null);
+    const termConfig = ref(null);
+    const lessonTemplates = ref([]);
+    const isLoadingScreenVisible = ref(false);
+    const solverProgress = ref(0);
+    const progressDisplay = computed(() => Math.round(Math.min(100, Math.max(0, solverProgress.value))));
+    const progressStyle = computed(() => ({
+      width: `${Math.min(100, Math.max(0, solverProgress.value))}%`,
+    }));
+    let progressTimer = null;
 
     const isIsoDayKey = (value) => isoDateRegex.test((value || '').trim());
 
@@ -303,14 +339,6 @@ export default defineComponent({
       if (!isIsoDayKey(trimmed)) return null;
       const parsed = new Date(`${trimmed}T00:00:00`);
       return Number.isNaN(parsed.getTime()) ? null : parsed;
-    };
-
-    const getDayNameFromKey = (key) => {
-      const parsed = toIsoDate(key);
-      if (parsed) {
-        return parsed.toLocaleDateString(undefined, { weekday: 'long' });
-      }
-      return key;
     };
 
     const isWeekendKey = (value) => {
@@ -364,11 +392,108 @@ export default defineComponent({
           .filter((slot) => slot.day && slot.start && slot.end);
       };
 
+      const sanitizeTerm = (term) => {
+        if (!term || typeof term !== 'object') return null;
+        const sanitizedDays = Array.isArray(term.days)
+          ? term.days
+              .map((day) => (typeof day === 'string' ? day.trim() : ''))
+              .filter((day) => day && !isWeekendKey(day))
+          : [];
+        const sanitizedSlots = Array.isArray(term.dailySlots)
+          ? term.dailySlots
+              .map((slot) => ({
+                start: (slot?.start || '').trim(),
+                end: (slot?.end || '').trim(),
+              }))
+              .filter((slot) => slot.start && slot.end)
+          : [];
+        const startDate = typeof term.startDate === 'string' ? term.startDate.trim() : '';
+        const weeksValue = Number.parseInt(term.weeks, 10);
+        return startDate
+          ? {
+              name: typeof term.name === 'string' ? term.name.trim() : '',
+              startDate,
+              weeks: Number.isFinite(weeksValue) && weeksValue > 0 ? weeksValue : 2,
+              days: sanitizedDays.length > 0 ? sanitizedDays : [...daysOfWeek],
+              dailySlots:
+                sanitizedSlots.length > 0
+                  ? sanitizedSlots
+                  : [
+                      { start: '08:30', end: '09:30' },
+                      { start: '09:45', end: '10:45' },
+                    ],
+            }
+          : null;
+      };
+
+      const sanitizeLessonTemplatesData = (templates) => {
+        if (!Array.isArray(templates)) return [];
+        return templates
+          .map((template) => {
+            const subject = (template?.subject || template?.subjectName || '').trim();
+            const className = (template?.class || template?.className || '').trim();
+            const teacher = (template?.teacher || template?.teacherName || '').trim();
+            const sessions =
+              Number.parseInt(
+                template?.sessionsPerWeek ??
+                  template?.lessonsPerWeek ??
+                  template?.weeklyLessons ??
+                  template?.frequencyPerWeek,
+                10
+              ) || 0;
+            const duration =
+              Number.parseInt(
+                template?.durationMinutes ?? template?.duration ?? template?.lengthMinutes,
+                10
+              ) || 0;
+            const preferredRoom = (template?.preferredRoom || template?.room || template?.classroom || '').trim();
+            const allowedRooms = Array.isArray(template?.allowedRooms || template?.rooms)
+              ? (template?.allowedRooms || template?.rooms)
+                  .map((room) => (typeof room === 'string' ? room.trim() : ''))
+                  .filter(Boolean)
+              : [];
+
+            if (!(subject && className && teacher && sessions > 0 && duration > 0)) {
+              return null;
+            }
+
+            const normalized = {
+              subject,
+              class: className,
+              teacher,
+              sessionsPerWeek: sessions,
+              durationMinutes: duration,
+            };
+
+            if (preferredRoom) {
+              normalized.preferredRoom = preferredRoom;
+            }
+            if (allowedRooms.length > 0) {
+              normalized.allowedRooms = allowedRooms;
+            }
+
+            return normalized;
+          })
+          .filter(Boolean);
+      };
+
       classes.value = sanitizeEntities(data.classes);
       teachers.value = sanitizeEntities(data.teachers);
       classrooms.value = sanitizeEntities(data.classrooms);
       subjects.value = sanitizeEntities(data.subjects);
       timeSlots.value = sanitizeTimeSlots(data.timeSlots);
+      termConfig.value = sanitizeTerm(data.term);
+      lessonTemplates.value = sanitizeLessonTemplatesData(data.lessonTemplates);
+
+      if (timeSlots.value.length === 0 && termConfig.value) {
+        const preferredDay =
+          termConfig.value.days.find((day) => !isWeekendKey(day)) || termConfig.value.days[0] || daysOfWeek[0];
+        timeSlots.value = termConfig.value.dailySlots.map((slot) => ({
+          day: preferredDay,
+          start: slot.start,
+          end: slot.end,
+        }));
+      }
 
       isCreatorMode.value = true;
       resetSolverState();
@@ -509,11 +634,13 @@ export default defineComponent({
     const createSchedule = async () => {
       if (!title.value || !description.value) return;
 
-      const res = await window.api.createSchedule({
+      const payload = {
         title: title.value,
         description: description.value,
         schedule: schedule.value,
-      });
+      };
+
+      const res = await window.api.createSchedule(JSON.parse(JSON.stringify(payload)));
 
       console.log(res);
 
@@ -524,6 +651,63 @@ export default defineComponent({
 
     const onScheduleChange = (payload) => {
       schedule.value = payload;
+      ensureSelectedDayForSchedule(displayedSchedule.value || payload || {}, { force: false });
+    };
+
+    let solverCompletionHandled = false;
+    let progressStallTimer = null;
+
+    const clearProgressTimers = () => {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      if (progressStallTimer) {
+        clearTimeout(progressStallTimer);
+        progressStallTimer = null;
+      }
+    };
+
+    const startSolverLoading = () => {
+      clearProgressTimers();
+      solverCompletionHandled = false;
+      solverProgress.value = 0;
+      isLoadingScreenVisible.value = true;
+      progressTimer = window.setInterval(() => {
+        if (solverProgress.value < 92) {
+          const increment = Math.random() * 4 + 1.5;
+          solverProgress.value = Math.min(92, solverProgress.value + increment);
+        }
+      }, 350);
+
+      progressStallTimer = window.setTimeout(() => {
+        clearProgressTimers();
+        progressTimer = window.setInterval(() => {
+          if (solverProgress.value < 98) {
+            const increment = Math.random() * 2 + 0.5;
+            solverProgress.value = Math.min(98, solverProgress.value + increment);
+          }
+        }, 600);
+      }, 12000);
+    };
+
+    const finishSolverLoading = () => {
+      solverCompletionHandled = true;
+      clearProgressTimers();
+      solverProgress.value = 100;
+      setTimeout(() => {
+        isLoadingScreenVisible.value = false;
+        solverProgress.value = 0;
+      }, 500);
+    };
+
+    const cancelSolverLoading = () => {
+      solverCompletionHandled = true;
+      clearProgressTimers();
+      setTimeout(() => {
+        isLoadingScreenVisible.value = false;
+        solverProgress.value = 0;
+      }, 300);
     };
 
     const buildWithSolver = async () => {
@@ -541,6 +725,7 @@ export default defineComponent({
         return;
       }
 
+      startSolverLoading();
       isBuilding.value = true;
 
       const payload = {
@@ -551,17 +736,59 @@ export default defineComponent({
         timeSlots: mapTimeSlots(timeSlots.value),
       };
 
+      if (termConfig.value) {
+        payload.term = {
+          name: termConfig.value.name,
+          startDate: termConfig.value.startDate,
+          weeks: termConfig.value.weeks,
+          days: Array.isArray(termConfig.value.days) ? [...termConfig.value.days] : [],
+          dailySlots: Array.isArray(termConfig.value.dailySlots)
+            ? termConfig.value.dailySlots.map((slot) => ({
+                start: slot.start,
+                end: slot.end,
+              }))
+            : [],
+        };
+      }
+
+      if (lessonTemplates.value.length > 0) {
+        payload.lessonTemplates = lessonTemplates.value.map((template) => {
+          const cloned = {
+            subject: template.subject,
+            class: template.class,
+            teacher: template.teacher,
+            sessionsPerWeek: template.sessionsPerWeek,
+            durationMinutes: template.durationMinutes,
+          };
+          if (template.preferredRoom) {
+            cloned.preferredRoom = template.preferredRoom;
+          }
+          if (Array.isArray(template.allowedRooms) && template.allowedRooms.length > 0) {
+            cloned.allowedRooms = [...template.allowedRooms];
+          }
+          return cloned;
+        });
+      }
+
       try {
-        const response = await window.api.runScheduleSolver(payload);
+        const response = await window.api.runScheduleSolver(JSON.parse(JSON.stringify(payload)));
         generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
         solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
         buildSuccess.value = true;
         isCreatorMode.value = false;
         selectedClassFilter.value = 'All Classes';
+        solverError.value = null;
+        schedule.value = generatedSchedule.value || {};
+        ensureSelectedDayForSchedule(generatedSchedule.value || {}, { force: true });
+        finishSolverLoading();
       } catch (error) {
         solverError.value = error?.message || 'Failed to build schedule with Z3 solver.';
+        cancelSolverLoading();
       } finally {
         isBuilding.value = false;
+        if (!solverCompletionHandled) {
+          cancelSolverLoading();
+        }
       }
     };
 
@@ -643,34 +870,18 @@ export default defineComponent({
       };
     };
 
-    const loadMockManualData = async () => {
+    const loadMockManualData = () => {
       solverError.value = null;
       buildSuccess.value = false;
 
       const mockPayload = createMockAutumnTermPayload();
       applyInitialData(mockPayload);
 
-      if (!window.api || !window.api.runScheduleSolver) {
-        solverError.value = 'Solver API is not available in this environment.';
-        return;
-      }
-
-      isBuilding.value = true;
-
-      try {
-        const response = await window.api.runScheduleSolver(mockPayload);
-        generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
-        solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
-        schedule.value = generatedSchedule.value;
-        buildSuccess.value = true;
-        solverError.value = null;
-        isCreatorMode.value = false;
-        selectedClassFilter.value = 'All Classes';
-      } catch (error) {
-        solverError.value = error?.message || 'Failed to load the mock schedule.';
-      } finally {
-        isBuilding.value = false;
-      }
+      schedule.value = {};
+      generatedSchedule.value = null;
+      solverAssignments.value = [];
+      isCreatorMode.value = true;
+      isBuilding.value = false;
     };
 
     const classFilterOptions = computed(() => {
@@ -720,59 +931,108 @@ export default defineComponent({
 
     const displayedSchedule = computed(() => filteredSchedule.value || generatedSchedule.value);
 
+    const sortDayKeys = (keys) => {
+      const weekdayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      return (keys || []).slice().sort((a, b) => {
+        const aIso = isIsoDayKey(a);
+        const bIso = isIsoDayKey(b);
+        if (aIso && bIso) {
+          return a.localeCompare(b);
+        }
+        if (aIso) return -1;
+        if (bIso) return 1;
+        const aIndex = weekdayOrder.indexOf(a);
+        const bIndex = weekdayOrder.indexOf(b);
+        if (aIndex === -1 && bIndex === -1) {
+          return a.localeCompare(b);
+        }
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      });
+    };
+
     const findFirstDayKey = (scheduleObject) => {
       if (!scheduleObject) return null;
-      const dayKeys = Object.keys(scheduleObject);
+      const dayKeys = sortDayKeys(Object.keys(scheduleObject));
       if (dayKeys.length === 0) return null;
       const firstWithEntries = dayKeys.find((day) => (scheduleObject[day] || []).length > 0);
       return firstWithEntries || dayKeys[0];
     };
 
-    const setWeekView = (dayKey = null) => {
-      window.dispatchEvent(new CustomEvent('schedule-set-view', {
-        detail: {
-          view: 'week',
-          day: dayKey,
-        },
-      }));
-    };
-
-    const ensureCalendarSync = (scheduleObject) => {
-      const dayKey = findFirstDayKey(scheduleObject);
-      if (!dayKey) return;
-      window.dispatchEvent(new CustomEvent('schedule-select-day', {
-        detail: {
-          day: dayKey,
-          dayName: getDayNameFromKey(dayKey),
-        },
-      }));
-      setWeekView(dayKey);
-    };
-
-    watch(displayedSchedule, (value) => {
-      if (value) {
-        schedule.value = value;
-      }
-    }, { immediate: true });
-
-    watch(selectedClassFilter, () => {
-      ensureCalendarSync(displayedSchedule.value);
+    const availableScheduleDays = computed(() => {
+      const scheduleObject = displayedSchedule.value || {};
+      const dayKeys = sortDayKeys(Object.keys(scheduleObject));
+      if (dayKeys.length === 0) return [];
+      const daysWithEntries = dayKeys.filter((day) => {
+        if (isWeekendKey(day)) return false;
+        const entries = scheduleObject[day] || [];
+        return entries.length > 0;
+      });
+      return daysWithEntries.length > 0 ? daysWithEntries : dayKeys;
     });
 
-    const selectedDay = computed({
-      get: () => Object.keys(displayedSchedule.value || {})[0] || null,
-      set: (value) => {
-        if (!value) return;
-        const dayKeys = Object.keys(displayedSchedule.value || {});
-        // Remove weekends automatically when switching classes
-        const weekdayKeys = dayKeys.filter((key) => !isWeekendKey(key));
-        if (!weekdayKeys.includes(value)) {
-          const fallback = findFirstDayKey(displayedSchedule.value);
-          if (fallback) {
-            ensureCalendarSync({ [fallback]: displayedSchedule.value[fallback] });
-          }
+    const ensureSelectedDayForSchedule = (scheduleObject, { force = false } = {}) => {
+      if (!scheduleObject || Object.keys(scheduleObject).length === 0) {
+        selectedDayKey.value = null;
+        return;
+      }
+      const dayKeys = sortDayKeys(Object.keys(scheduleObject));
+      const candidateDays = dayKeys.filter((day) => {
+        if (isWeekendKey(day)) return false;
+        const entries = scheduleObject[day] || [];
+        return entries.length > 0;
+      });
+      const fallbackDay = candidateDays.length > 0 ? candidateDays[0] : dayKeys[0];
+
+      if (
+        force ||
+        !selectedDayKey.value ||
+        !Object.prototype.hasOwnProperty.call(scheduleObject, selectedDayKey.value) ||
+        ((scheduleObject[selectedDayKey.value] || []).length === 0 && candidateDays.length > 0)
+      ) {
+        selectedDayKey.value = fallbackDay || null;
+      }
+    };
+
+    const handleSidebarSelectDay = (dayKey) => {
+      if (!dayKey) return;
+      selectedDayKey.value = dayKey;
+    };
+
+    const handleScheduleSelectedDay = (dayKey) => {
+      if (!dayKey) return;
+      selectedDayKey.value = dayKey;
+    };
+
+    watch(
+      displayedSchedule,
+      (value) => {
+        if (value) {
+          schedule.value = value;
+          ensureSelectedDayForSchedule(value);
+        } else {
+          schedule.value = {};
+          selectedDayKey.value = null;
         }
       },
+      { immediate: true }
+    );
+
+    watch(availableScheduleDays, (days) => {
+      if (!displayedSchedule.value) {
+        selectedDayKey.value = null;
+        return;
+      }
+      if (!days.includes(selectedDayKey.value)) {
+        ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
+      }
+    });
+
+    watch(isCreatorMode, (value) => {
+      if (!value && displayedSchedule.value) {
+        ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
+      }
     });
 
     const visibleAssignments = computed(() => {
@@ -788,13 +1048,16 @@ export default defineComponent({
       () => props.initialData,
       (value) => {
         applyInitialData(value);
-        ensureCalendarSync(displayedSchedule.value);
+        ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
       },
       { immediate: true, deep: true }
     );
 
+    onUnmounted(() => {
+      clearProgressTimers();
+    });
+
     return {
-      selectedDay,
       title,
       description,
       goToHome,
@@ -836,6 +1099,14 @@ export default defineComponent({
       loadMockManualData,
       schoolsoftIcon,
       skola24Icon,
+      isLoadingScreenVisible,
+      progressDisplay,
+      progressStyle,
+      solverProgress,
+      selectedDayKey,
+      availableScheduleDays,
+      handleSidebarSelectDay,
+      handleScheduleSelectedDay,
     };
   },
 });
@@ -848,6 +1119,7 @@ export default defineComponent({
   flex-direction: column;
   overflow: hidden;
   background: transparent;
+  position: relative;
 }
 
 .top-nav {
@@ -1429,5 +1701,108 @@ export default defineComponent({
 
 .chat-section:not(.open) {
   transform: translateX(100%);
+}
+
+.solver-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh;
+  box-sizing: border-box;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.18) 0%, rgba(118, 75, 162, 0.18) 100%);
+  backdrop-filter: blur(6px);
+}
+
+.loading-card {
+  width: 100%;
+  max-width: 70vh;
+  background: #ffffff;
+  border-radius: 2vh;
+  box-shadow: 0 2vh 5vh rgba(102, 126, 234, 0.2);
+  padding: 4vh;
+  display: flex;
+  flex-direction: column;
+  gap: 2.4vh;
+  text-align: center;
+}
+
+.loading-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.8vh;
+}
+
+.loading-icon {
+  font-size: 4vh;
+  color: #667eea;
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-title {
+  font-size: 3vh;
+  font-weight: 600;
+  color: #2d3748;
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.loading-subtitle {
+  font-size: 1.7vh;
+  color: #4a5568;
+  margin: 0;
+}
+
+.progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2vh;
+  align-items: center;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 1.2vh;
+  background: #edf2f7;
+  border-radius: 1vh;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 1vh;
+  transition: width 0.3s ease;
+}
+
+.progress-value {
+  font-size: 1.6vh;
+  font-weight: 600;
+  color: #667eea;
+}
+
+.loading-hint {
+  font-size: 1.5vh;
+  color: #718096;
+  margin: 0;
 }
 </style>

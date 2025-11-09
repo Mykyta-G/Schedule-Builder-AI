@@ -76,7 +76,8 @@
             :class="{
               'other-month': day.otherMonth,
               'today': day.isToday,
-              'selected': day.isSelected
+              'selected': day.isSelected,
+              'has-schedule': day.hasSchedule
             }"
             @click="selectCalendarDay(day)"
           >
@@ -314,11 +315,26 @@
 </template>
 
 <script>
-import { defineComponent, ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { defineComponent, ref, reactive, computed, onMounted, watch, nextTick } from 'vue';
 
 export default defineComponent({
   name: 'Sidebar',
-  setup() {
+  props: {
+    selectedDay: {
+      type: String,
+      default: null,
+    },
+    availableDays: {
+      type: Array,
+      default: () => [],
+    },
+    initialPresetId: {
+      type: String,
+      default: null,
+    },
+  },
+  emits: ['selectDay'],
+  setup(props, { emit }) {
     // State
     const errorMessage = ref('');
     const newBlock = reactive({
@@ -378,7 +394,7 @@ export default defineComponent({
 
     // Calendar
     const currentDate = ref(new Date());
-    const selectedScheduleDay = ref(null);
+    const selectedScheduleDay = ref(props.selectedDay || null);
     const selectedCalendarDate = ref(null); // Date object for the selected day
     const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
     
@@ -386,6 +402,13 @@ export default defineComponent({
       'Januari', 'Februari', 'Mars', 'April', 'Maj', 'Juni',
       'Juli', 'Augusti', 'September', 'Oktober', 'November', 'December'
     ];
+
+    const parseIsoDate = (value) => {
+      if (!value || typeof value !== 'string') return null;
+      if (!isoDateRegex.test(value)) return null;
+      const parsed = new Date(`${value}T00:00:00`);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
 
     const currentMonthName = computed(() => months[currentDate.value.getMonth()]);
     const currentMonthValue = computed(() => {
@@ -395,6 +418,14 @@ export default defineComponent({
     });
     const currentYear = computed(() => currentDate.value.getFullYear());
     const weekdays = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
+
+    const availableDaysSet = computed(() => {
+      return new Set(
+        (props.availableDays || [])
+          .map((day) => (typeof day === 'string' ? day.trim() : ''))
+          .filter(Boolean)
+      );
+    });
 
     // Map day names to day of week index (Monday = 0, Tuesday = 1, etc.)
     const dayNameToIndex = {
@@ -453,16 +484,22 @@ export default defineComponent({
       
       while (current <= endDate) {
         const dayDate = new Date(current);
+        const isoKey = toIsoKey(dayDate);
         const isToday = dayDate.toDateString() === today.toDateString();
-        const isSelected = selectedCalendarDate.value && 
-          dayDate.toDateString() === selectedCalendarDate.value.toDateString();
-        
+        const isSelected = props.selectedDay
+          ? isoKey === props.selectedDay
+          : selectedCalendarDate.value &&
+            dayDate.toDateString() === selectedCalendarDate.value.toDateString();
+        const hasSchedule = availableDaysSet.value.has(isoKey);
+
         days.push({
           day: current.getDate(),
           otherMonth: current.getMonth() !== month,
           isToday,
           isSelected,
-          date: new Date(dayDate)
+          hasSchedule,
+          date: new Date(dayDate),
+          isoKey,
         });
         current.setDate(current.getDate() + 1);
       }
@@ -1233,42 +1270,49 @@ export default defineComponent({
 
     const selectCalendarDay = (dayInfo) => {
       if (dayInfo.otherMonth) return; // Don't select days from other months
-      
-      selectedCalendarDate.value = dayInfo.date;
-      const isoKey = toIsoKey(dayInfo.date);
-      const dayIndex = dayInfo.date.getDay();
-      const dayNameMap = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const dayName = dayNameMap[dayIndex];
+
+      selectedCalendarDate.value = new Date(dayInfo.date);
+      const isoKey = dayInfo.isoKey || toIsoKey(dayInfo.date);
 
       selectedScheduleDay.value = isoKey;
-      window.dispatchEvent(new CustomEvent('schedule-select-day', {
-        detail: { day: isoKey, dayName },
-      }));
+      emit('selectDay', isoKey);
     };
 
-    // Listen for day selection from SimpleSchedule
-    const handleScheduleDaySelect = (event) => {
-      const dayKey = event.detail?.day;
-      const fallbackName = event.detail?.dayName;
-
-      if (!dayKey) return;
-      selectedScheduleDay.value = dayKey;
-
-      let dateForDay = getDateForDayName(dayKey);
-      if (!dateForDay && fallbackName) {
-        dateForDay = getDateForDayName(fallbackName);
+    const syncCalendarWithSelectedDay = (dayKey) => {
+      selectedScheduleDay.value = dayKey || null;
+      if (!dayKey) {
+        selectedCalendarDate.value = null;
+        return;
       }
-
-      if (dateForDay) {
-        selectedCalendarDate.value = dateForDay;
+      const parsedIso = parseIsoDate(dayKey);
+      const targetDate = parsedIso || getDateForDayName(dayKey);
+      if (targetDate) {
+        selectedCalendarDate.value = new Date(targetDate);
         if (
-          dateForDay.getMonth() !== currentDate.value.getMonth() ||
-          dateForDay.getFullYear() !== currentDate.value.getFullYear()
+          targetDate.getMonth() !== currentDate.value.getMonth() ||
+          targetDate.getFullYear() !== currentDate.value.getFullYear()
         ) {
-          currentDate.value = new Date(dateForDay);
+          currentDate.value = new Date(targetDate);
         }
       }
     };
+
+    watch(
+      () => props.selectedDay,
+      (value) => {
+        syncCalendarWithSelectedDay(value);
+      },
+      { immediate: true }
+    );
+
+    watch(
+      () => props.availableDays,
+      () => {
+        if (props.selectedDay) {
+          syncCalendarWithSelectedDay(props.selectedDay);
+        }
+      }
+    );
 
     const goToPreviousMonth = () => {
       const newDate = new Date(currentDate.value);
@@ -1294,25 +1338,6 @@ export default defineComponent({
     // Lifecycle
     onMounted(async () => {
       await loadSchedules();
-      
-      // Listen for day selection events from SimpleSchedule
-      window.addEventListener('schedule-day-selected', handleScheduleDaySelect);
-      
-      // Initial sync - if SimpleSchedule has a default day, update calendar
-      // This will be handled when SimpleSchedule emits its initial selection
-      setTimeout(() => {
-        // Trigger initial sync by emitting default day if needed
-        const defaultDay = 'Monday'; // SimpleSchedule default
-        const dateForDay = getDateForDayName(defaultDay);
-        if (dateForDay) {
-          selectedScheduleDay.value = defaultDay;
-          selectedCalendarDate.value = dateForDay;
-        }
-      }, 100);
-    });
-
-    onUnmounted(() => {
-      window.removeEventListener('schedule-day-selected', handleScheduleDaySelect);
     });
 
     watch(activeSchemaId, (newId) => {
@@ -2015,6 +2040,12 @@ export default defineComponent({
   color: white;
   font-weight: 600;
   border-color: #7c3aed;
+}
+
+.calendar-day.has-schedule:not(.selected):not(.other-month) {
+  border-color: rgba(102, 126, 234, 0.6);
+  color: #4c51bf;
+  font-weight: 600;
 }
 
 .calendar-day.selected.today {

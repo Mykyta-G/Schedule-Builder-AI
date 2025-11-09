@@ -166,11 +166,15 @@ export default defineComponent({
       type: Object,
       default: null,
     },
+    selectedDayKey: {
+      type: String,
+      default: null,
+    },
   },
-  emits: ['change'],
+  emits: ['change', 'update:selectedDayKey'],
   setup(props, { emit }) {
     const days = ref(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
-    const selectedDay = ref('Monday');
+    const selectedDay = ref(props.selectedDayKey || days.value[0] || null);
     const viewMode = ref('week'); // 'day' or 'week'
     const expandedItem = ref(null);
     const hoverDay = ref(null);
@@ -242,14 +246,6 @@ export default defineComponent({
       return Number.isNaN(parsed.getTime()) ? null : parsed;
     };
 
-    const getEventDayName = (day) => {
-      const parsed = parseIsoDate(day);
-      if (parsed) {
-        return parsed.toLocaleDateString(undefined, { weekday: 'long' });
-      }
-      return day;
-    };
-
     const isWeekendKey = (day) => {
       const normalized = (day || '').trim().toLowerCase();
       if (normalized === 'saturday' || normalized === 'sunday') return true;
@@ -299,6 +295,8 @@ export default defineComponent({
       };
     };
 
+    let internalSelectionFlag = false;
+
     const emitChange = () => {
       const payload = {};
       for (const d of days.value) {
@@ -315,6 +313,25 @@ export default defineComponent({
       }
       emit('change', payload);
     };
+
+    watch(
+      () => props.selectedDayKey,
+      (value) => {
+        if (!value) {
+          internalSelectionFlag = false;
+          return;
+        }
+        ensureDayBuckets([value]);
+        if (selectedDay.value !== value) {
+          selectedDay.value = value;
+        }
+        if (!internalSelectionFlag) {
+          viewMode.value = 'week';
+        }
+        internalSelectionFlag = false;
+      },
+      { immediate: true }
+    );
 
     const applyExternalSchedule = (incoming) => {
       if (!incoming || typeof incoming !== 'object') {
@@ -338,6 +355,7 @@ export default defineComponent({
       if (!days.value.includes(selectedDay.value)) {
         selectedDay.value = days.value[0] || selectedDay.value;
       }
+      emit('update:selectedDayKey', selectedDay.value);
 
       emitChange();
     };
@@ -501,39 +519,16 @@ export default defineComponent({
       return `${format(sh, sm)} - ${format(eh, em)}`;
     };
 
-    const selectDay = (day) => { 
-      selectedDay.value = day;
+    const selectDay = (day) => {
+      if (!day) {
+        return;
+      }
+      if (selectedDay.value !== day) {
+        selectedDay.value = day;
+      }
       viewMode.value = 'day';
-      if (viewMode.value === 'day') {
-        // Stay in day view
-      }
-      // Emit event for Sidebar calendar sync
-      window.dispatchEvent(new CustomEvent('schedule-day-selected', { 
-        detail: { day, dayName: getEventDayName(day) } 
-      }));
-    };
-
-    // Listen for day selection from Sidebar calendar
-    const handleCalendarDaySelect = (event) => {
-      const dayKey = event.detail?.day;
-      const fallbackName = event.detail?.dayName;
-
-      if (dayKey && days.value.includes(dayKey)) {
-        selectedDay.value = dayKey;
-      } else if (fallbackName && days.value.includes(fallbackName)) {
-        selectedDay.value = fallbackName;
-      }
-    };
-
-    const handleExternalViewChange = (event) => {
-      const mode = event.detail?.view;
-      if (mode === 'week' || mode === 'day') {
-        viewMode.value = mode;
-      }
-      const targetDay = event.detail?.day;
-      if (targetDay && days.value.includes(targetDay)) {
-        selectedDay.value = targetDay;
-      }
+      internalSelectionFlag = true;
+      emit('update:selectedDayKey', day);
     };
 
     // Drag and drop
@@ -722,31 +717,22 @@ export default defineComponent({
       resizingItemId.value = null;
     };
 
+    const handleDocumentClick = (event) => {
+      if (!event.target.closest('.scheduled-item')) {
+        expandedItem.value = null;
+      }
+    };
+
     onMounted(() => {
       window.addEventListener('mousemove', handleResize);
       window.addEventListener('mouseup', stopResize);
-      // Listen for day selection from Sidebar calendar
-      window.addEventListener('schedule-select-day', handleCalendarDaySelect);
-      window.addEventListener('schedule-set-view', handleExternalViewChange);
-      // Close expanded item when clicking outside
-      document.addEventListener('click', (e) => {
-        if (!e.target.closest('.scheduled-item')) {
-          expandedItem.value = null;
-        }
-      });
-      // Emit initial selected day to sync with Sidebar calendar
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('schedule-day-selected', { 
-          detail: { day: selectedDay.value, dayName: getEventDayName(selectedDay.value) } 
-        }));
-      }, 50);
+      document.addEventListener('click', handleDocumentClick);
     });
 
     onUnmounted(() => {
       window.removeEventListener('mousemove', handleResize);
       window.removeEventListener('mouseup', stopResize);
-      window.removeEventListener('schedule-select-day', handleCalendarDaySelect);
-      window.removeEventListener('schedule-set-view', handleExternalViewChange);
+      document.removeEventListener('click', handleDocumentClick);
     });
 
     watch(
