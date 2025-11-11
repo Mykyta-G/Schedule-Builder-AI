@@ -28,11 +28,12 @@ SimpleSchedule.vue.
 
 import json
 import sys
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 try:
-    from z3 import Int, Or, Solver, sat
+    from z3 import And, AtMost, Implies, Int, Or, Solver, Z3Exception, sat
 except ImportError as err:  # pragma: no cover - dependency error surfaced to caller
     sys.stdout.write(
         json.dumps(
@@ -104,6 +105,16 @@ def _coerce_positive_int(value: Any, field_name: str) -> int:
     return parsed
 
 
+def _coerce_non_negative_int(value: Any, field_name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"'{field_name}' must be a non-negative integer") from None
+    if parsed < 0:
+        raise ValueError(f"'{field_name}' must be zero or greater")
+    return parsed
+
+
 def _minutes_to_clock(total_minutes: int) -> str:
     hours, minutes = divmod(int(total_minutes), 60)
     return f"{hours:02d}:{minutes:02d}"
@@ -123,14 +134,20 @@ def _read_input() -> Dict[str, Any]:
     return json.loads(raw)
 
 
-def _extract_name(item: Any) -> str:
+def _extract_name(item: Any, *, strict: bool = False, field_name: str = "") -> str:
+    name = ""
     if isinstance(item, str):
-        return item.strip()
-    if isinstance(item, dict):
-        name = item.get("name")
-        if isinstance(name, str):
-            return name.strip()
-    return ""
+        name = item.strip()
+    elif isinstance(item, dict):
+        raw_name = item.get("name")
+        if isinstance(raw_name, str):
+            name = raw_name.strip()
+
+    if strict and not name:
+        context = f" for {field_name}" if field_name else ""
+        raise ValueError(f"Expected a non-empty 'name'{context}")
+
+    return name
 
 
 def _parse_minutes(value: str) -> int:
@@ -244,9 +261,21 @@ def _sanitize_lesson_templates(raw_templates: Any) -> List[Dict[str, Any]]:
         if not isinstance(item, dict):
             continue
 
-        class_name = _extract_name(item.get("class") or item.get("className"))
-        teacher_name = _extract_name(item.get("teacher") or item.get("teacherName"))
-        subject_name = _extract_name(item.get("subject") or item.get("subjectName"))
+        class_name = _extract_name(
+            item.get("class") or item.get("className"),
+            strict=True,
+            field_name=f"lessonTemplates[{idx}].class",
+        )
+        teacher_name = _extract_name(
+            item.get("teacher") or item.get("teacherName"),
+            strict=True,
+            field_name=f"lessonTemplates[{idx}].teacher",
+        )
+        subject_name = _extract_name(
+            item.get("subject") or item.get("subjectName"),
+            strict=True,
+            field_name=f"lessonTemplates[{idx}].subject",
+        )
 
         if not (class_name and teacher_name and subject_name):
             raise ValueError(
@@ -327,6 +356,7 @@ def _build_term_time_slots(term_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
                     {
                         "day": day_key,
                         "dayName": day["label"],
+                        "dayIndex": day["index"],
                         "weekIndex": week_index,
                         "start": slot["start"],
                         "end": slot["end"],
@@ -417,7 +447,7 @@ def _validate_entities(entities: Dict[str, List[Any]]) -> None:
             raise ValueError(f"Solver requires at least one entry in '{key}'")
 
 
-def _solve_basic(data: Dict[str, Any]) -> Dict[str, Any]:
+def _solve_basic(data: Dict[str, Any], *, debug: bool = False) -> Dict[str, Any]:
     entities = _normalize_entities(data)
     _validate_entities(entities)
 
@@ -442,6 +472,17 @@ def _solve_basic(data: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     solver = Solver()
+    debug_enabled = bool(debug)
+    constraint_id = 0
+
+    def add_constraint(expr, label: str) -> None:
+        nonlocal constraint_id
+        if debug_enabled:
+            name = f"{label}_{constraint_id}"
+            constraint_id += 1
+            solver.assert_and_track(expr, name)
+        else:
+            solver.add(expr)
 
     slot_vars = [Int(f"slot_{i}") for i in range(lesson_count)]
     teacher_vars = [Int(f"teacher_{i}") for i in range(lesson_count)]
@@ -452,20 +493,56 @@ def _solve_basic(data: Dict[str, Any]) -> Dict[str, Any]:
     max_room = len(classrooms) - 1
 
     for i in range(lesson_count):
-        solver.add(slot_vars[i] >= 0, slot_vars[i] <= max_slot)
-        solver.add(teacher_vars[i] >= 0, teacher_vars[i] <= max_teacher)
-        solver.add(room_vars[i] >= 0, room_vars[i] <= max_room)
+        add_constraint(
+            And(slot_vars[i] >= 0, slot_vars[i] <= max_slot),
+            f"basic_slot_bounds_{i}",
+        )
+        add_constraint(
+            And(teacher_vars[i] >= 0, teacher_vars[i] <= max_teacher),
+            f"basic_teacher_bounds_{i}",
+        )
+        add_constraint(
+            And(room_vars[i] >= 0, room_vars[i] <= max_room),
+            f"basic_room_bounds_{i}",
+        )
 
     for i in range(lesson_count):
         for j in range(i + 1, lesson_count):
-            solver.add(Or(slot_vars[i] != slot_vars[j], teacher_vars[i] != teacher_vars[j]))
-            solver.add(Or(slot_vars[i] != slot_vars[j], room_vars[i] != room_vars[j]))
+            add_constraint(
+                Or(slot_vars[i] != slot_vars[j], teacher_vars[i] != teacher_vars[j]),
+                f"basic_teacher_slot_conflict_{i}_{j}",
+            )
+            add_constraint(
+                Or(slot_vars[i] != slot_vars[j], room_vars[i] != room_vars[j]),
+                f"basic_room_slot_conflict_{i}_{j}",
+            )
 
             if lessons[i]["classIndex"] == lessons[j]["classIndex"]:
-                solver.add(slot_vars[i] != slot_vars[j])
+                add_constraint(
+                    slot_vars[i] != slot_vars[j],
+                    f"basic_class_slot_conflict_{i}_{j}",
+                )
 
-    if solver.check() != sat:
-        raise RuntimeError("Z3 could not find a feasible schedule with the provided data")
+    check_result = solver.check()
+    if check_result != sat:
+        debug_details = ""
+        if debug_enabled:
+            try:
+                unsat_core = [str(item) for item in solver.unsat_core()]
+            except Z3Exception:
+                unsat_core = []
+            stats = solver.statistics()
+            stats_summary = {
+                str(stats.get_key(i)): stats.get_key_value(i)
+                for i in range(stats.size())
+            }
+            if unsat_core:
+                debug_details += f" | UNSAT core: {unsat_core}"
+            if stats_summary:
+                debug_details += f" | stats: {stats_summary}"
+        raise RuntimeError(
+            "Z3 could not find a feasible schedule with the provided data" + debug_details
+        )
 
     model = solver.model()
 
@@ -519,9 +596,80 @@ def _solve_basic(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _solve_structured(data: Dict[str, Any]) -> Dict[str, Any]:
+def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str, Any]:
     term_cfg = _prepare_term_configuration(data.get("term") or {})
     templates = _sanitize_lesson_templates(data.get("lessonTemplates") or [])
+
+    constraints_cfg = data.get("constraints") if isinstance(data.get("constraints"), dict) else {}
+    raw_max_class_idle = constraints_cfg.get("maxClassIdleMinutes")
+    if raw_max_class_idle is not None:
+        max_class_idle_minutes = _coerce_positive_int(raw_max_class_idle, "constraints.maxClassIdleMinutes")
+    else:
+        max_class_idle_minutes = 120
+
+    raw_max_teacher_idle = constraints_cfg.get("maxTeacherIdleMinutes")
+    if raw_max_teacher_idle is not None:
+        max_teacher_idle_minutes = _coerce_positive_int(raw_max_teacher_idle, "constraints.maxTeacherIdleMinutes")
+    else:
+        max_teacher_idle_minutes = 180
+
+    raw_max_class_sessions = constraints_cfg.get("maxClassSessionsPerDay")
+    if raw_max_class_sessions is not None:
+        max_class_sessions_per_day = _coerce_positive_int(
+            raw_max_class_sessions, "constraints.maxClassSessionsPerDay"
+        )
+    else:
+        max_class_sessions_per_day = 5
+
+    raw_max_teacher_sessions = constraints_cfg.get("maxTeacherSessionsPerDay")
+    if raw_max_teacher_sessions is not None:
+        max_teacher_sessions_per_day = _coerce_positive_int(
+            raw_max_teacher_sessions, "constraints.maxTeacherSessionsPerDay"
+        )
+    else:
+        max_teacher_sessions_per_day = 3
+
+    raw_pe_buffer = constraints_cfg.get("physicalEducationBufferMinutes")
+    if raw_pe_buffer is not None:
+        physical_education_buffer = _coerce_positive_int(
+            raw_pe_buffer, "constraints.physicalEducationBufferMinutes"
+        )
+    else:
+        physical_education_buffer = 15
+
+    pe_subjects_raw = constraints_cfg.get("physicalEducationSubjects")
+    if isinstance(pe_subjects_raw, list) and pe_subjects_raw:
+        physical_education_subjects = {
+            str(item).strip().lower() for item in pe_subjects_raw if str(item).strip()
+        }
+    else:
+        physical_education_subjects = {
+            "idrott",
+            "idrott och hälsa",
+            "physical education",
+            "pe",
+            "gymnastik",
+        }
+
+    raw_class_earliest_start = constraints_cfg.get("classEarliestStartMinutes")
+    if raw_class_earliest_start is not None:
+        earliest_class_start_minutes = _coerce_non_negative_int(
+            raw_class_earliest_start, "constraints.classEarliestStartMinutes"
+        )
+    else:
+        earliest_class_start_minutes = 8 * 60
+
+    raw_class_latest_start = constraints_cfg.get("classLatestStartMinutes")
+    if raw_class_latest_start is not None:
+        latest_class_start_minutes = _coerce_non_negative_int(
+            raw_class_latest_start, "constraints.classLatestStartMinutes"
+        )
+    else:
+        latest_class_start_minutes = 10 * 60
+    if latest_class_start_minutes < earliest_class_start_minutes:
+        raise ValueError(
+            "constraints.classLatestStartMinutes must be greater than or equal to constraints.classEarliestStartMinutes"
+        )
 
     classes: List[str] = [_extract_name(item) for item in data.get("classes", []) if _extract_name(item)]
     teachers: List[str] = [_extract_name(item) for item in data.get("teachers", []) if _extract_name(item)]
@@ -534,10 +682,13 @@ def _solve_structured(data: Dict[str, Any]) -> Dict[str, Any]:
     if not available_time_slots:
         raise ValueError("Term configuration did not produce any teaching time slots")
 
+    slot_start_minutes = [slot["startMinutes"] for slot in available_time_slots]
+    slot_signature_registry: Dict[tuple, int] = {}
+
     subject_color_index: Dict[str, int] = {}
     sessions: List[Dict[str, Any]] = []
 
-    for template in templates:
+    for template_index, template in enumerate(templates):
         _append_unique(classes, template["className"])
         _append_unique(teachers, template["teacherName"])
         _append_unique(subjects, template["subjectName"])
@@ -554,11 +705,13 @@ def _solve_structured(data: Dict[str, Any]) -> Dict[str, Any]:
             if preferred_room not in allowed_rooms:
                 allowed_rooms.insert(0, preferred_room)
 
-        color_seed = subject_color_index.setdefault(template["subjectName"], len(subject_color_index))
+        color_seed = subject_color_index.setdefault(
+            template["subjectName"], len(subject_color_index)
+        )
         color_index = color_seed % 5
 
-        for week_index in range(term_cfg["weeks"]):
-            for _ in range(template["sessionsPerWeek"]):
+        for occurrence_index in range(template["sessionsPerWeek"]):
+            for week_index in range(term_cfg["weeks"]):
                 sessions.append(
                     {
                         "className": template["className"],
@@ -566,9 +719,13 @@ def _solve_structured(data: Dict[str, Any]) -> Dict[str, Any]:
                         "subjectName": template["subjectName"],
                         "duration": template["duration"],
                         "weekIndex": week_index,
+                        "templateIndex": template_index,
+                        "occurrenceIndex": occurrence_index,
                         "colorIndex": color_index,
                         "preferredRoom": preferred_room,
                         "roomDomainNames": allowed_rooms[:],
+                        "requiresBufferAfter": template["subjectName"].strip().lower()
+                        in physical_education_subjects,
                     }
                 )
 
@@ -606,39 +763,388 @@ def _solve_structured(data: Dict[str, Any]) -> Dict[str, Any]:
         if not room_domain:
             room_domain = list(range(len(classrooms)))
 
+        slot_day_pairs = []
+        slot_domain_by_day: Dict[int, List[int]] = defaultdict(list)
+        slot_signature_options: List[tuple] = []
+        signature_values: List[int] = []
+        for slot_index in session["slotDomain"]:
+            slot_info = available_time_slots[slot_index]
+            day_index = slot_info["dayIndex"]
+            slot_day_pairs.append((slot_index, day_index))
+            slot_domain_by_day[day_index].append(slot_index)
+
+            signature_key = (day_index, slot_info["start"], slot_info["end"])
+            signature_value = slot_signature_registry.setdefault(
+                signature_key, len(slot_signature_registry)
+            )
+            slot_signature_options.append((slot_index, signature_value))
+            signature_values.append(signature_value)
+
         session["roomDomain"] = room_domain
+        session["slotDayPairs"] = slot_day_pairs
+        session["slotDomainByDay"] = {day: slots[:] for day, slots in slot_domain_by_day.items()}
+        session["slotSignatureOptions"] = slot_signature_options
+        session["signatureDomain"] = list(dict.fromkeys(signature_values))
+        session["possibleDays"] = set(slot_domain_by_day.keys())
         session["classIndex"] = class_indices[session["className"]]
         session["teacherIndex"] = teacher_indices[session["teacherName"]]
+        session["bufferMinutes"] = physical_education_buffer if session["requiresBufferAfter"] else 0
 
     solver = Solver()
+    debug_enabled = bool(debug)
+    constraint_id = 0
+
+    def add_constraint(expr, label: str) -> None:
+        nonlocal constraint_id
+        if debug_enabled:
+            name = f"{label}_{constraint_id}"
+            constraint_id += 1
+            solver.assert_and_track(expr, name)
+        else:
+            solver.add(expr)
+
     slot_vars = [Int(f"slot_{i}") for i in range(total_sessions)]
     room_vars = [Int(f"room_{i}") for i in range(total_sessions)]
+    day_vars = [Int(f"day_{i}") for i in range(total_sessions)]
+    signature_vars = [Int(f"signature_{i}") for i in range(total_sessions)]
+
+    class_slot_candidates: Dict[tuple, List[int]] = defaultdict(list)
+    teacher_slot_candidates: Dict[tuple, List[int]] = defaultdict(list)
+    room_slot_candidates: Dict[tuple, List[int]] = defaultdict(list)
+    subject_sessions_by_week_class: Dict[tuple, List[int]] = defaultdict(list)
+    teacher_day_candidates: Dict[tuple, List[int]] = defaultdict(list)
+    class_day_candidates: Dict[tuple, List[int]] = defaultdict(list)
+    template_occurrence_groups: Dict[tuple, List[int]] = defaultdict(list)
+
+    def prohibit_large_idle_gaps(
+        indices: List[int],
+        day_index: int,
+        max_idle_minutes: int,
+        label_prefix: str,
+    ) -> None:
+        if max_idle_minutes is None:
+            return
+        threshold = max_idle_minutes
+        relevant = []
+        for idx in indices:
+            day_slots = sessions[idx]["slotDomainByDay"].get(day_index, [])
+            if day_slots:
+                relevant.append((idx, day_slots))
+        if len(relevant) <= 1:
+            return
+
+        for i in range(len(relevant)):
+            idx_a, slots_a = relevant[i]
+            duration_a = sessions[idx_a]["duration"]
+            for j in range(i + 1, len(relevant)):
+                idx_b, slots_b = relevant[j]
+                duration_b = sessions[idx_b]["duration"]
+                for slot_a in slots_a:
+                    start_a = slot_start_minutes[slot_a]
+                    end_a = start_a + duration_a
+                    for slot_b in slots_b:
+                        start_b = slot_start_minutes[slot_b]
+                        end_b = start_b + duration_b
+
+                        if start_b >= end_a:
+                            gap = start_b - end_a
+                            if gap > threshold:
+                                add_constraint(
+                                    Or(
+                                        day_vars[idx_a] != day_index,
+                                        day_vars[idx_b] != day_index,
+                                        slot_vars[idx_a] != slot_a,
+                                        slot_vars[idx_b] != slot_b,
+                                    ),
+                                    f"{label_prefix}_{idx_a}_{idx_b}_{slot_a}_{slot_b}_ab",
+                                )
+                        elif start_a >= end_b:
+                            gap = start_a - end_b
+                            if gap > threshold:
+                                add_constraint(
+                                    Or(
+                                        day_vars[idx_a] != day_index,
+                                        day_vars[idx_b] != day_index,
+                                        slot_vars[idx_a] != slot_a,
+                                        slot_vars[idx_b] != slot_b,
+                                    ),
+                                    f"{label_prefix}_{idx_a}_{idx_b}_{slot_a}_{slot_b}_ba",
+                                )
+
+    def enforce_transition_buffers(
+        indices: List[int],
+        day_index: int,
+        label_prefix: str,
+    ) -> None:
+        requiring = [
+            idx for idx in indices if sessions[idx]["bufferMinutes"] > 0
+        ]
+        if not requiring:
+            return
+        for idx_a in requiring:
+            buffer_minutes = sessions[idx_a]["bufferMinutes"]
+            slots_a = sessions[idx_a]["slotDomainByDay"].get(day_index, [])
+            if not slots_a:
+                continue
+            duration_a = sessions[idx_a]["duration"]
+            for idx_b in indices:
+                if idx_a == idx_b:
+                    continue
+                slots_b = sessions[idx_b]["slotDomainByDay"].get(day_index, [])
+                if not slots_b:
+                    continue
+                for slot_a in slots_a:
+                    end_a = slot_start_minutes[slot_a] + duration_a
+                    for slot_b in slots_b:
+                        start_b = slot_start_minutes[slot_b]
+                        if start_b < end_a:
+                            continue
+                        if start_b < end_a + buffer_minutes:
+                            add_constraint(
+                                Or(
+                                    day_vars[idx_a] != day_index,
+                                    day_vars[idx_b] != day_index,
+                                    slot_vars[idx_a] != slot_a,
+                                    slot_vars[idx_b] != slot_b,
+                                ),
+                                f"{label_prefix}_{idx_a}_{idx_b}_{slot_a}_{slot_b}",
+                            )
 
     for idx, session in enumerate(sessions):
         slot_domain = session["slotDomain"]
         if len(slot_domain) == 1:
-            solver.add(slot_vars[idx] == slot_domain[0])
+            add_constraint(slot_vars[idx] == slot_domain[0], f"slot_domain_fix_{idx}")
         else:
-            solver.add(Or(*[slot_vars[idx] == value for value in slot_domain]))
+            add_constraint(
+                Or(*[slot_vars[idx] == value for value in slot_domain]),
+                f"slot_domain_{idx}",
+            )
 
         room_domain = session["roomDomain"]
         if len(room_domain) == 1:
-            solver.add(room_vars[idx] == room_domain[0])
+            add_constraint(room_vars[idx] == room_domain[0], f"room_domain_fix_{idx}")
         else:
-            solver.add(Or(*[room_vars[idx] == value for value in room_domain]))
+            add_constraint(
+                Or(*[room_vars[idx] == value for value in room_domain]),
+                f"room_domain_{idx}",
+            )
 
-    for i in range(total_sessions):
-        for j in range(i + 1, total_sessions):
-            solver.add(Or(slot_vars[i] != slot_vars[j], room_vars[i] != room_vars[j]))
+        signature_domain = session["signatureDomain"]
+        if len(signature_domain) == 1:
+            add_constraint(
+                signature_vars[idx] == signature_domain[0],
+                f"signature_domain_fix_{idx}",
+            )
+        else:
+            add_constraint(
+                Or(*[signature_vars[idx] == value for value in signature_domain]),
+                f"signature_domain_{idx}",
+            )
 
-            if sessions[i]["classIndex"] == sessions[j]["classIndex"]:
-                solver.add(slot_vars[i] != slot_vars[j])
+        for slot_index in session["slotDomain"]:
+            if slot_start_minutes[slot_index] < earliest_class_start_minutes:
+                add_constraint(
+                    slot_vars[idx] != slot_index,
+                    f"class_earliest_start_block_{idx}_{slot_index}",
+                )
 
-            if sessions[i]["teacherIndex"] == sessions[j]["teacherIndex"]:
-                solver.add(slot_vars[i] != slot_vars[j])
+        duration_guards = [
+            And(
+                slot_vars[idx] == slot_index,
+                available_time_slots[slot_index]["duration"] >= session["duration"],
+            )
+            for slot_index in slot_domain
+        ]
+        add_constraint(Or(*duration_guards), f"slot_duration_guard_{idx}")
 
-    if solver.check() != sat:
-        raise RuntimeError("Z3 could not satisfy the provided lesson templates within the term configuration")
+        slot_signature_links = [
+            And(slot_vars[idx] == slot_index, signature_vars[idx] == signature_value)
+            for slot_index, signature_value in session["slotSignatureOptions"]
+        ]
+        add_constraint(Or(*slot_signature_links), f"slot_signature_link_{idx}")
+
+        add_constraint(
+            Or(
+                *[
+                    And(slot_vars[idx] == slot_index, day_vars[idx] == day_index)
+                    for (slot_index, day_index) in session["slotDayPairs"]
+                ]
+            ),
+            f"slot_day_link_{idx}",
+        )
+
+        subject_key = (session["classIndex"], session["weekIndex"], session["subjectName"])
+        subject_sessions_by_week_class[subject_key].append(idx)
+
+        template_occurrence_groups[
+            (session["templateIndex"], session["occurrenceIndex"])
+        ].append(idx)
+
+        for slot_index in slot_domain:
+            class_slot_candidates[(session["classIndex"], slot_index)].append(idx)
+            teacher_slot_candidates[(session["teacherIndex"], slot_index)].append(idx)
+            for room_index in session["roomDomain"]:
+                room_slot_candidates[(room_index, slot_index)].append(idx)
+
+        for day_index in session["possibleDays"]:
+            teacher_day_candidates[(session["teacherIndex"], session["weekIndex"], day_index)].append(
+                idx
+            )
+            class_day_candidates[(session["classIndex"], session["weekIndex"], day_index)].append(
+                idx
+            )
+
+    for idx in range(total_sessions):
+        add_constraint(
+            And(day_vars[idx] >= 0, day_vars[idx] <= 6),
+            f"day_bounds_{idx}",
+        )
+
+    for indices in template_occurrence_groups.values():
+        if len(indices) <= 1:
+            continue
+        base_idx = indices[0]
+        for other_idx in indices[1:]:
+            add_constraint(
+                signature_vars[other_idx] == signature_vars[base_idx],
+                f"weekly_pattern_signature_{base_idx}_{other_idx}",
+            )
+            add_constraint(
+                day_vars[other_idx] == day_vars[base_idx],
+                f"weekly_pattern_day_{base_idx}_{other_idx}",
+            )
+
+    for indices in subject_sessions_by_week_class.values():
+        if len(indices) > 1:
+            for i in range(len(indices)):
+                for j in range(i + 1, len(indices)):
+                    add_constraint(
+                        day_vars[indices[i]] != day_vars[indices[j]],
+                        f"subject_day_spread_{indices[i]}_{indices[j]}",
+                    )
+
+    for (class_index, slot_index), indices in class_slot_candidates.items():
+        if len(indices) <= 1:
+            continue
+        terms = [slot_vars[idx] == slot_index for idx in indices]
+        add_constraint(
+            AtMost(*terms, 1),
+            f"class_slot_conflict_{class_index}_{slot_index}",
+        )
+
+    for (teacher_index, slot_index), indices in teacher_slot_candidates.items():
+        if len(indices) <= 1:
+            continue
+        terms = [slot_vars[idx] == slot_index for idx in indices]
+        add_constraint(
+            AtMost(*terms, 1),
+            f"teacher_slot_conflict_{teacher_index}_{slot_index}",
+        )
+
+    for (room_index, slot_index), indices in room_slot_candidates.items():
+        if len(indices) <= 1:
+            continue
+        terms = [
+            And(slot_vars[idx] == slot_index, room_vars[idx] == room_index)
+            for idx in indices
+        ]
+        add_constraint(
+            AtMost(*terms, 1),
+            f"room_slot_conflict_{room_index}_{slot_index}",
+        )
+
+    for (teacher_index, week_index, day_index), indices in teacher_day_candidates.items():
+        if len(indices) > max_teacher_sessions_per_day:
+            terms = [day_vars[idx] == day_index for idx in indices]
+            add_constraint(
+                AtMost(*terms, max_teacher_sessions_per_day),
+                f"teacher_day_load_{teacher_index}_{week_index}_{day_index}",
+            )
+        if len(indices) > 1 and max_teacher_idle_minutes is not None:
+            prohibit_large_idle_gaps(
+                indices,
+                day_index,
+                max_teacher_idle_minutes,
+                f"teacher_idle_{teacher_index}_{week_index}_{day_index}",
+            )
+        if len(indices) > 1:
+            enforce_transition_buffers(
+                indices,
+                day_index,
+                f"teacher_buffer_{teacher_index}_{week_index}_{day_index}",
+            )
+
+    for (class_index, week_index, day_index), indices in class_day_candidates.items():
+        if len(indices) > max_class_sessions_per_day:
+            terms = [day_vars[idx] == day_index for idx in indices]
+            add_constraint(
+                AtMost(*terms, max_class_sessions_per_day),
+                f"class_day_load_{class_index}_{week_index}_{day_index}",
+            )
+        if len(indices) > 1 and max_class_idle_minutes is not None:
+            prohibit_large_idle_gaps(
+                indices,
+                day_index,
+                max_class_idle_minutes,
+                f"class_idle_{class_index}_{week_index}_{day_index}",
+            )
+        if len(indices) > 1:
+            enforce_transition_buffers(
+                indices,
+                day_index,
+                f"class_buffer_{class_index}_{week_index}_{day_index}",
+            )
+        scheduled_terms = [day_vars[idx] == day_index for idx in indices]
+        if scheduled_terms:
+            window_terms = []
+            for idx in indices:
+                slot_pairs = []
+                for slot_index in sessions[idx]["slotDomainByDay"].get(day_index, []):
+                    if slot_start_minutes[slot_index] <= latest_class_start_minutes:
+                        slot_pairs.append(
+                            And(
+                                day_vars[idx] == day_index,
+                                slot_vars[idx] == slot_index,
+                            )
+                        )
+                if slot_pairs:
+                    window_terms.append(Or(*slot_pairs))
+            if window_terms:
+                add_constraint(
+                    Implies(
+                        Or(*scheduled_terms),
+                        Or(*window_terms),
+                    ),
+                    f"class_start_window_{class_index}_{week_index}_{day_index}",
+                )
+            else:
+                for idx in indices:
+                    add_constraint(
+                        day_vars[idx] != day_index,
+                        f"class_start_window_block_{class_index}_{week_index}_{day_index}_{idx}",
+                    )
+
+    check_result = solver.check()
+    if check_result != sat:
+        debug_details = ""
+        if debug_enabled:
+            try:
+                unsat_core = [str(item) for item in solver.unsat_core()]
+            except Z3Exception:
+                unsat_core = []
+            stats = solver.statistics()
+            stats_summary = {
+                str(stats.get_key(i)): stats.get_key_value(i)
+                for i in range(stats.size())
+            }
+            if unsat_core:
+                debug_details += f" | UNSAT core: {unsat_core}"
+            if stats_summary:
+                debug_details += f" | stats: {stats_summary}"
+        raise RuntimeError(
+            "Z3 could not satisfy the provided lesson templates within the term configuration"
+            + debug_details
+        )
 
     model = solver.model()
     assignments: List[Dict[str, Any]] = []
@@ -709,9 +1215,14 @@ def _solve_structured(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def solve_schedule(data: Dict[str, Any]) -> Dict[str, Any]:
+    debug_enabled = bool(
+        data.get("debug")
+        or data.get("debugMode")
+        or data.get("debug_mode")
+    )
     if data.get("lessonTemplates"):
-        return _solve_structured(data)
-    return _solve_basic(data)
+        return _solve_structured(data, debug=debug_enabled)
+    return _solve_basic(data, debug=debug_enabled)
 
 
 def main() -> None:
