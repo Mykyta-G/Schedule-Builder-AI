@@ -58,6 +58,32 @@
                   </div>
                 </button>
               </div>
+              <div class="solver-options-panel">
+                <label class="solver-option">
+                  <input type="checkbox" v-model="solverOptions.relaxedConstraints">
+                  <span>Use relaxed constraints (faster search)</span>
+                </label>
+                <label class="solver-option">
+                  <input type="checkbox" v-model="solverOptions.includeLunch">
+                  <span>Include lunch break</span>
+                </label>
+                <label class="solver-option">
+                  <input type="checkbox" v-model="solverOptions.debugMode">
+                  <span>Enable solver debug output</span>
+                </label>
+                <div class="solver-option" v-if="solverOptions.includeLunch">
+                  <label class="solver-option-inline">
+                    <span>Lunch granularity (minutes)</span>
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      v-model.number="solverOptions.lunchGranularity"
+                      class="solver-option-number"
+                    >
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div class="divider">
@@ -68,7 +94,10 @@
             <div class="categories-section">
               <div class="section-title-row">
                 <h3 class="section-title">Manual Entry</h3>
+                <div class="mock-actions">
                 <button class="mock-fill-btn" @click="loadMockManualData">Load Mock Data</button>
+                  <button class="mock-fill-btn secondary" @click="loadMinimalMockData">Load Minimal Data</button>
+                </div>
               </div>
               
               <!-- Classes Category -->
@@ -267,7 +296,7 @@
           <h2 class="loading-title">Building your schedule</h2>
         </div>
         <p class="loading-subtitle">
-          Optimizing lessons with Skolverkets constraints. This usually takes just a moment.
+          Optimizing lessons with Skolverkets constraints. Grab a coffee and relax.
         </p>
         <div class="progress-container">
           <div class="progress-bar">
@@ -275,14 +304,14 @@
           </div>
           <span class="progress-value">{{ progressDisplay }}%</span>
         </div>
-        <p class="loading-hint">Checking teacher, classroom, and class availability…</p>
+        <p class="progress-status-text">{{ progressMessage }}</p>
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { defineComponent, ref, computed, watch, onUnmounted } from 'vue';
+import { defineComponent, ref, reactive, computed, watch, onUnmounted } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
 import Sidebar from './Sidebar.vue';
@@ -326,11 +355,51 @@ export default defineComponent({
     const lessonTemplates = ref([]);
     const isLoadingScreenVisible = ref(false);
     const solverProgress = ref(0);
+    const progressMessage = ref('Preparing schedule…');
+    const progressPhases = [
+      {
+        limit: 70,
+        interval: 300,
+        duration: 10000,
+        minIncrement: 2,
+        maxIncrement: 6,
+        message: 'Collecting classes, teachers, and rooms…',
+      },
+      {
+        limit: 88,
+        interval: 550,
+        duration: 14000,
+        minIncrement: 0.8,
+        maxIncrement: 2.5,
+        message: 'Mapping lessons to available slots…',
+      },
+      {
+        limit: 94,
+        interval: 900,
+        duration: 16000,
+        minIncrement: 0.3,
+        maxIncrement: 1.2,
+        message: 'Resolving conflicts and buffers…',
+      },
+      {
+        limit: 97,
+        interval: 1400,
+        duration: null,
+        minIncrement: 0.12,
+        maxIncrement: 0.45,
+        message: 'Stabilizing weekly patterns…',
+      },
+    ];
     const progressDisplay = computed(() => Math.round(Math.min(100, Math.max(0, solverProgress.value))));
     const progressStyle = computed(() => ({
       width: `${Math.min(100, Math.max(0, solverProgress.value))}%`,
     }));
     let progressTimer = null;
+    let progressPhaseTimeout = null;
+    const finalPushInterval = 1500;
+    const finalPushMinIncrement = 0.1;
+    const finalPushMaxIncrement = 0.35;
+    let finalPushTimer = null;
 
     const isIsoDayKey = (value) => isoDateRegex.test((value || '').trim());
 
@@ -655,16 +724,66 @@ export default defineComponent({
     };
 
     let solverCompletionHandled = false;
-    let progressStallTimer = null;
 
     const clearProgressTimers = () => {
       if (progressTimer) {
         clearInterval(progressTimer);
         progressTimer = null;
       }
-      if (progressStallTimer) {
-        clearTimeout(progressStallTimer);
-        progressStallTimer = null;
+      if (progressPhaseTimeout) {
+        clearTimeout(progressPhaseTimeout);
+        progressPhaseTimeout = null;
+      }
+      if (finalPushTimer) {
+        clearInterval(finalPushTimer);
+        finalPushTimer = null;
+      }
+    };
+
+    const startProgressPhase = (phaseIndex) => {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      if (progressPhaseTimeout) {
+        clearTimeout(progressPhaseTimeout);
+        progressPhaseTimeout = null;
+      }
+
+      if (phaseIndex >= progressPhases.length) {
+        progressMessage.value = 'Synthesizing final schedule…';
+        if (!finalPushTimer) {
+          finalPushTimer = window.setInterval(() => {
+            if (solverProgress.value < 99.4) {
+              const span = finalPushMaxIncrement - finalPushMinIncrement;
+              const increment = finalPushMinIncrement + Math.random() * (span > 0 ? span : 0);
+              solverProgress.value = Math.min(99.4, solverProgress.value + increment);
+            }
+          }, finalPushInterval);
+        }
+        return;
+      }
+
+      if (finalPushTimer) {
+        clearInterval(finalPushTimer);
+        finalPushTimer = null;
+      }
+
+      const phase = progressPhases[phaseIndex];
+      progressMessage.value = phase?.message || 'Building schedule…';
+
+      progressTimer = window.setInterval(() => {
+        if (solverProgress.value < phase.limit) {
+          const span = phase.maxIncrement - phase.minIncrement;
+          const increment = phase.minIncrement + Math.random() * (span > 0 ? span : 0);
+          solverProgress.value = Math.min(phase.limit, solverProgress.value + increment);
+        }
+      }, phase.interval);
+
+      if (phase.duration !== null) {
+        progressPhaseTimeout = window.setTimeout(() => {
+          startProgressPhase(phaseIndex + 1);
+        }, phase.duration);
       }
     };
 
@@ -673,40 +792,30 @@ export default defineComponent({
       solverCompletionHandled = false;
       solverProgress.value = 0;
       isLoadingScreenVisible.value = true;
-      progressTimer = window.setInterval(() => {
-        if (solverProgress.value < 92) {
-          const increment = Math.random() * 4 + 1.5;
-          solverProgress.value = Math.min(92, solverProgress.value + increment);
-        }
-      }, 350);
-
-      progressStallTimer = window.setTimeout(() => {
-        clearProgressTimers();
-        progressTimer = window.setInterval(() => {
-          if (solverProgress.value < 98) {
-            const increment = Math.random() * 2 + 0.5;
-            solverProgress.value = Math.min(98, solverProgress.value + increment);
-          }
-        }, 600);
-      }, 12000);
+      progressMessage.value = progressPhases[0]?.message || 'Preparing schedule…';
+      startProgressPhase(0);
     };
 
     const finishSolverLoading = () => {
       solverCompletionHandled = true;
       clearProgressTimers();
+      progressMessage.value = 'Schedule ready!';
       solverProgress.value = 100;
       setTimeout(() => {
         isLoadingScreenVisible.value = false;
         solverProgress.value = 0;
+        progressMessage.value = 'Preparing schedule…';
       }, 500);
     };
 
     const cancelSolverLoading = () => {
       solverCompletionHandled = true;
       clearProgressTimers();
+      progressMessage.value = 'Solver cancelled.';
       setTimeout(() => {
         isLoadingScreenVisible.value = false;
         solverProgress.value = 0;
+        progressMessage.value = 'Preparing schedule…';
       }, 300);
     };
 
@@ -770,6 +879,38 @@ export default defineComponent({
         });
       }
 
+    if (solverOptions.relaxedConstraints || solverOptions.includeLunch) {
+      const constraints = {};
+      if (solverOptions.relaxedConstraints) {
+        constraints.maxClassSessionsPerDay = 6;
+        constraints.maxTeacherSessionsPerDay = 6;
+        constraints.maxClassIdleMinutes = 300;
+        constraints.maxTeacherIdleMinutes = 360;
+        constraints.physicalEducationBufferMinutes = 10;
+        constraints.physicalEducationSubjects = ['Idrott och hälsa 1', 'Idrott', 'Gymnastik'];
+        constraints.disableSubjectSpread = true;
+        constraints.disableTransitionBuffers = true;
+      }
+      if (solverOptions.includeLunch) {
+        constraints.lunchBreak = {
+          enabled: true,
+          windowStart: '10:30',
+          windowEnd: '13:30',
+          durationMinutes: 45,
+          granularityMinutes: Math.max(5, Number.parseInt(solverOptions.lunchGranularity, 10) || 30),
+        };
+      } else {
+        constraints.lunchBreak = {
+          enabled: false,
+        };
+      }
+      payload.constraints = constraints;
+    }
+
+    if (solverOptions.debugMode) {
+      payload.debug = true;
+    }
+
       try {
         const response = await window.api.runScheduleSolver(JSON.parse(JSON.stringify(payload)));
         generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
@@ -794,71 +935,126 @@ export default defineComponent({
 
     const createMockAutumnTermPayload = () => {
       const classesList = [
-        { name: '7A' },
-        { name: '7B' },
+        { name: 'SA1' },
+        { name: 'NA1' },
       ];
 
       const teachersList = [
-        { name: 'Anna Larsson' },
-        { name: 'Björn Svensson' },
-        { name: 'Carina Holm' },
-        { name: 'David Ek' },
-        { name: 'Eva Lind' },
-        { name: 'Fredrik Berg' },
-        { name: 'Gisela Nyberg' },
+        // SA1 core staff
+        { name: 'Anna Larsson (SA1 Matematik)' },
+        { name: 'Björn Svensson (SA1 Svenska)' },
+        { name: 'Carina Holm (SA1 Engelska)' },
+        { name: 'Eva Lind (SA1 Historia)' },
+        { name: 'Oskar Dahl (SA1 Samhällskunskap)' },
+        { name: 'Helena Ortiz (SA1 Moderna språk)' },
+        { name: 'Rebecka Åsberg (SA1 Psykologi)' },
+        { name: 'Patricia Nguyen (SA1 Religion)' },
+        { name: 'Tomas Vik (SA1 Geografi)' },
+        { name: 'Fredrik Berg (SA1 Idrott)' },
+        { name: 'Maria Fors (SA1 Entreprenörskap)' },
+        { name: 'Gisela Nyberg (SA1 Estetisk kommunikation)' },
+        { name: 'Sara Lindqvist (SA1 Mentor)' },
+
+        // NA1 core staff
+        { name: 'Henrik Andersson (NA1 Matematik)' },
+        { name: 'Katarina Blom (NA1 Svenska)' },
+        { name: 'Daniel Falk (NA1 Engelska)' },
+        { name: 'Annika Holm (NA1 Fysik)' },
+        { name: 'Niklas Öberg (NA1 Kemi)' },
+        { name: 'Victor Hamid (NA1 Biologi)' },
+        { name: 'Ulrika Bergström (NA1 Moderna språk)' },
+        { name: 'Lars Holmström (NA1 Teknik)' },
+        { name: 'Quentin Salo (NA1 Programmering)' },
+        { name: 'Oskar Dahl (NA1 Laborationstid)' },
+        { name: 'Eva Lund (NA1 Historia)' },
+        { name: 'Johanna Lundqvist (NA1 Idrott)' },
+        { name: 'Sara Lindqvist (NA1 Mentor)' },
       ];
 
       const classroomsList = [
+        { name: 'Sal 101' },
+        { name: 'Sal 102' },
+        { name: 'Sal 201' },
         { name: 'Matte 201' },
-        { name: 'Svenska 105' },
-        { name: 'Engelska 110' },
-        { name: 'NO-lab 2' },
+        { name: 'Språksal 1' },
+        { name: 'Språksal 2' },
         { name: 'SO-sal 3' },
+        { name: 'NO-lab 1' },
+        { name: 'NO-lab 2' },
+        { name: 'Teknikverkstan' },
+        { name: 'Programmeringslabbet' },
         { name: 'Gympasalen' },
-        { name: 'Bildsalen' },
+        { name: 'Ateljén' },
       ];
 
       const subjectsList = [
-        { name: 'Matematik' },
-        { name: 'Svenska' },
-        { name: 'Engelska' },
-        { name: 'Naturkunskap' },
-        { name: 'Samhällskunskap' },
-        { name: 'Idrott' },
-        { name: 'Bild' },
+        { name: 'Matematik 1c' },
+        { name: 'Svenska 1' },
+        { name: 'Engelska 6' },
+        { name: 'Historia 1b' },
+        { name: 'Samhällskunskap 1b' },
+        { name: 'Moderna språk – Spanska' },
+        { name: 'Moderna språk – Franska' },
+        { name: 'Psykologi 1' },
+        { name: 'Religion 1' },
+        { name: 'Geografi 1' },
+        { name: 'Idrott och hälsa 1' },
+        { name: 'Entreprenörskap' },
+        { name: 'Estetisk kommunikation' },
+        { name: 'Fysik 1' },
+        { name: 'Kemi 1' },
+        { name: 'Biologi 1' },
+        { name: 'Teknik 1' },
+        { name: 'Programmering 1' },
+        { name: 'Laborationstid' },
+        { name: 'Mentorstid' },
       ];
 
       const lessonTemplates = [
-        { subject: 'Matematik', class: '7A', teacher: 'Anna Larsson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Matte 201' },
-        { subject: 'Svenska', class: '7A', teacher: 'Björn Svensson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Svenska 105' },
-        { subject: 'Engelska', class: '7A', teacher: 'Carina Holm', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'Engelska 110' },
-        { subject: 'Naturkunskap', class: '7A', teacher: 'David Ek', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'NO-lab 2' },
-        { subject: 'Samhällskunskap', class: '7A', teacher: 'Eva Lind', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'SO-sal 3' },
-        { subject: 'Idrott', class: '7A', teacher: 'Fredrik Berg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Gympasalen' },
-        { subject: 'Bild', class: '7A', teacher: 'Gisela Nyberg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Bildsalen' },
+        // SA1 – Samhällsvetenskapsprogrammet
+        { subject: 'Matematik 1c', class: 'SA1', teacher: 'Anna Larsson (SA1 Matematik)', sessionsPerWeek: 3, durationMinutes: 70, preferredRoom: 'Matte 201' },
+        { subject: 'Svenska 1', class: 'SA1', teacher: 'Björn Svensson (SA1 Svenska)', sessionsPerWeek: 3, durationMinutes: 70, preferredRoom: 'Sal 101' },
+        { subject: 'Engelska 6', class: 'SA1', teacher: 'Carina Holm (SA1 Engelska)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'Språksal 1' },
+        { subject: 'Historia 1b', class: 'SA1', teacher: 'Eva Lind (SA1 Historia)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'SO-sal 3' },
+        { subject: 'Samhällskunskap 1b', class: 'SA1', teacher: 'Oskar Dahl (SA1 Samhällskunskap)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'SO-sal 3' },
+        { subject: 'Moderna språk – Spanska', class: 'SA1', teacher: 'Helena Ortiz (SA1 Moderna språk)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'Språksal 2' },
+        { subject: 'Psykologi 1', class: 'SA1', teacher: 'Rebecka Åsberg (SA1 Psykologi)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'Sal 102' },
+        { subject: 'Religion 1', class: 'SA1', teacher: 'Patricia Nguyen (SA1 Religion)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'Sal 201' },
+        { subject: 'Geografi 1', class: 'SA1', teacher: 'Tomas Vik (SA1 Geografi)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'SO-sal 3' },
+        { subject: 'Idrott och hälsa 1', class: 'SA1', teacher: 'Fredrik Berg (SA1 Idrott)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'Gympasalen' },
+        { subject: 'Entreprenörskap', class: 'SA1', teacher: 'Maria Fors (SA1 Entreprenörskap)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'Sal 201' },
+        { subject: 'Estetisk kommunikation', class: 'SA1', teacher: 'Gisela Nyberg (SA1 Estetisk kommunikation)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'Ateljén' },
+        { subject: 'Mentorstid', class: 'SA1', teacher: 'Sara Lindqvist (SA1 Mentor)', sessionsPerWeek: 2, durationMinutes: 45, preferredRoom: 'Sal 102' },
 
-        { subject: 'Matematik', class: '7B', teacher: 'Anna Larsson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Matte 201' },
-        { subject: 'Svenska', class: '7B', teacher: 'Björn Svensson', sessionsPerWeek: 3, durationMinutes: 60, preferredRoom: 'Svenska 105' },
-        { subject: 'Engelska', class: '7B', teacher: 'Carina Holm', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'Engelska 110' },
-        { subject: 'Naturkunskap', class: '7B', teacher: 'David Ek', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'NO-lab 2' },
-        { subject: 'Samhällskunskap', class: '7B', teacher: 'Eva Lind', sessionsPerWeek: 2, durationMinutes: 60, preferredRoom: 'SO-sal 3' },
-        { subject: 'Idrott', class: '7B', teacher: 'Fredrik Berg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Gympasalen' },
-        { subject: 'Bild', class: '7B', teacher: 'Gisela Nyberg', sessionsPerWeek: 1, durationMinutes: 60, preferredRoom: 'Bildsalen' },
+        // NA1 – Naturvetenskapsprogrammet
+        { subject: 'Matematik 1c', class: 'NA1', teacher: 'Henrik Andersson (NA1 Matematik)', sessionsPerWeek: 3, durationMinutes: 70, preferredRoom: 'Matte 201' },
+        { subject: 'Svenska 1', class: 'NA1', teacher: 'Katarina Blom (NA1 Svenska)', sessionsPerWeek: 3, durationMinutes: 70, preferredRoom: 'Sal 101' },
+        { subject: 'Engelska 6', class: 'NA1', teacher: 'Daniel Falk (NA1 Engelska)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'Språksal 1' },
+        { subject: 'Fysik 1', class: 'NA1', teacher: 'Annika Holm (NA1 Fysik)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'NO-lab 1', allowedRooms: ['NO-lab 1', 'NO-lab 2'] },
+        { subject: 'Kemi 1', class: 'NA1', teacher: 'Niklas Öberg (NA1 Kemi)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'NO-lab 2', allowedRooms: ['NO-lab 1', 'NO-lab 2'] },
+        { subject: 'Biologi 1', class: 'NA1', teacher: 'Victor Hamid (NA1 Biologi)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'NO-lab 1', allowedRooms: ['NO-lab 1', 'NO-lab 2'] },
+        { subject: 'Moderna språk – Franska', class: 'NA1', teacher: 'Ulrika Bergström (NA1 Moderna språk)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'Språksal 2' },
+        { subject: 'Teknik 1', class: 'NA1', teacher: 'Lars Holmström (NA1 Teknik)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'Teknikverkstan' },
+        { subject: 'Programmering 1', class: 'NA1', teacher: 'Quentin Salo (NA1 Programmering)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'Programmeringslabbet' },
+        { subject: 'Laborationstid', class: 'NA1', teacher: 'Oskar Dahl (NA1 Laborationstid)', sessionsPerWeek: 2, durationMinutes: 70, preferredRoom: 'NO-lab 2', allowedRooms: ['NO-lab 1', 'NO-lab 2'] },
+        { subject: 'Historia 1b', class: 'NA1', teacher: 'Eva Lund (NA1 Historia)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'SO-sal 3' },
+        { subject: 'Idrott och hälsa 1', class: 'NA1', teacher: 'Johanna Lundqvist (NA1 Idrott)', sessionsPerWeek: 1, durationMinutes: 70, preferredRoom: 'Gympasalen' },
+        { subject: 'Mentorstid', class: 'NA1', teacher: 'Sara Lindqvist (NA1 Mentor)', sessionsPerWeek: 2, durationMinutes: 45, preferredRoom: 'Sal 102' },
       ];
 
       return {
         term: {
           name: 'Höstterminen 2025 – Vecka 34-35',
           startDate: '2025-08-18',
-          weeks: 2,
+          weeks: 1,
           days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
           dailySlots: [
-            { start: '08:30', end: '09:30' },
-            { start: '09:45', end: '10:45' },
-            { start: '11:00', end: '12:00' },
-            { start: '12:45', end: '13:45' },
-            { start: '14:00', end: '15:00' },
-            { start: '15:15', end: '16:15' },
+            { start: '08:10', end: '09:20' },
+            { start: '09:30', end: '10:40' },
+            { start: '10:50', end: '12:00' },
+            { start: '13:00', end: '14:10' },
+            { start: '14:20', end: '15:30' },
+            { start: '15:40', end: '16:50' },
           ],
         },
         classes: classesList,
@@ -867,6 +1063,21 @@ export default defineComponent({
         subjects: subjectsList,
         timeSlots: [],
         lessonTemplates,
+        constraints: {
+          maxClassSessionsPerDay: 6,
+          maxTeacherSessionsPerDay: 5,
+          maxClassIdleMinutes: 150,
+          maxTeacherIdleMinutes: 180,
+          physicalEducationBufferMinutes: 15,
+          physicalEducationSubjects: ['Idrott och hälsa 1', 'Idrott', 'Gymnastik'],
+          lunchBreak: {
+            enabled: true,
+            windowStart: '10:45',
+            windowEnd: '12:45',
+            durationMinutes: 45,
+            granularityMinutes: 15,
+          },
+        },
       };
     };
 
@@ -876,6 +1087,54 @@ export default defineComponent({
 
       const mockPayload = createMockAutumnTermPayload();
       applyInitialData(mockPayload);
+
+      schedule.value = {};
+      generatedSchedule.value = null;
+      solverAssignments.value = [];
+      isCreatorMode.value = true;
+      isBuilding.value = false;
+    };
+
+  const solverOptions = reactive({
+    relaxedConstraints: true,
+    includeLunch: true,
+    debugMode: false,
+    lunchGranularity: 30,
+  });
+
+    const loadMinimalMockData = () => {
+      solverError.value = null;
+      buildSuccess.value = false;
+
+      const minimalPayload = {
+        term: {
+          name: 'Mini Demo Week',
+          startDate: '2025-08-18',
+          weeks: 1,
+          days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+          dailySlots: [
+            { start: '09:00', end: '10:00' },
+            { start: '10:15', end: '11:15' },
+            { start: '13:00', end: '14:00' },
+          ],
+        },
+        classes: [{ name: 'Demo Class' }],
+        teachers: [{ name: 'Demo Teacher' }],
+        classrooms: [{ name: 'Demo Room' }],
+        subjects: [{ name: 'Demo Subject' }],
+        lessonTemplates: [
+          {
+            subject: 'Demo Subject',
+            class: 'Demo Class',
+            teacher: 'Demo Teacher',
+            sessionsPerWeek: 3,
+            durationMinutes: 60,
+            preferredRoom: 'Demo Room',
+          },
+        ],
+      };
+
+      applyInitialData(minimalPayload);
 
       schedule.value = {};
       generatedSchedule.value = null;
@@ -902,8 +1161,7 @@ export default defineComponent({
           });
         });
       }
-      const sorted = Array.from(unique).sort();
-      return ['All Classes', ...sorted];
+      return ['All Classes', ...Array.from(unique).sort()];
     });
 
     const filteredSchedule = computed(() => {
@@ -1097,9 +1355,12 @@ export default defineComponent({
       removeSubject,
       buildWithSolver,
       loadMockManualData,
+      solverOptions,
+      loadMinimalMockData,
       schoolsoftIcon,
       skola24Icon,
       isLoadingScreenVisible,
+      progressMessage,
       progressDisplay,
       progressStyle,
       solverProgress,
@@ -1237,6 +1498,11 @@ export default defineComponent({
   margin-bottom: 1.5vh;
 }
 
+.mock-actions {
+  display: flex;
+  gap: 1.5vh;
+}
+
 .mock-fill-btn {
   padding: 0.9vh 1.8vh;
   border: 0.1vh solid #dd6b20;
@@ -1254,6 +1520,56 @@ export default defineComponent({
   color: #9c4221;
   border-color: #c05621;
   box-shadow: 0 0.4vh 1.2vh rgba(221, 107, 32, 0.25);
+}
+
+.mock-fill-btn.secondary {
+  border-color: #2b6cb0;
+  color: #1a365d;
+  background: #ebf8ff;
+}
+
+.mock-fill-btn.secondary:hover {
+  background: #bee3f8;
+  color: #1a365d;
+  border-color: #2b6cb0;
+  box-shadow: 0 0.4vh 1.2vh rgba(43, 108, 176, 0.25);
+}
+
+.solver-options-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2vh 2vh;
+  padding: 1.5vh;
+  border: 0.1vh dashed #cbd5f5;
+  border-radius: 1vh;
+  background: #f8fafc;
+  margin-bottom: 2vh;
+}
+
+.solver-option {
+  display: flex;
+  align-items: center;
+  gap: 0.8vh;
+  font-size: 1.35vh;
+  color: #2d3748;
+}
+
+.solver-option input[type='checkbox'] {
+  transform: scale(1.1);
+}
+
+.solver-option-inline {
+  display: flex;
+  align-items: center;
+  gap: 1vh;
+}
+
+.solver-option-number {
+  width: 6vh;
+  padding: 0.6vh;
+  border: 0.1vh solid #cbd5e0;
+  border-radius: 0.6vh;
+  font-size: 1.3vh;
 }
 
 .import-buttons {
@@ -1798,6 +2114,15 @@ export default defineComponent({
   font-size: 1.6vh;
   font-weight: 600;
   color: #667eea;
+}
+
+.progress-status-text {
+  font-size: 1.5vh;
+  color: #4c51bf;
+  opacity: 0.65;
+  margin: 0;
+  font-style: italic;
+  letter-spacing: 0.02em;
 }
 
 .loading-hint {

@@ -158,6 +158,17 @@ def _parse_minutes(value: str) -> int:
     return int(hour) * 60 + int(minute)
 
 
+def _coerce_minutes_value(value: Any, field_name: str) -> int:
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError(f"'{field_name}' must be a valid time string or minutes value")
+        if ":" in trimmed:
+            return _parse_minutes(trimmed)
+        value = trimmed
+    return _coerce_non_negative_int(value, field_name)
+
+
 def _prepare_term_configuration(term_data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(term_data, dict):
         raise ValueError("Term configuration must be provided as an object")
@@ -629,6 +640,9 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
     else:
         max_teacher_sessions_per_day = 3
 
+    disable_subject_spread = bool(constraints_cfg.get("disableSubjectSpread"))
+    disable_transition_buffers = bool(constraints_cfg.get("disableTransitionBuffers"))
+
     raw_pe_buffer = constraints_cfg.get("physicalEducationBufferMinutes")
     if raw_pe_buffer is not None:
         physical_education_buffer = _coerce_positive_int(
@@ -639,11 +653,11 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
 
     pe_subjects_raw = constraints_cfg.get("physicalEducationSubjects")
     if isinstance(pe_subjects_raw, list) and pe_subjects_raw:
-        physical_education_subjects = {
+        physical_education_keywords = {
             str(item).strip().lower() for item in pe_subjects_raw if str(item).strip()
         }
     else:
-        physical_education_subjects = {
+        physical_education_keywords = {
             "idrott",
             "idrott och hälsa",
             "physical education",
@@ -671,6 +685,58 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
             "constraints.classLatestStartMinutes must be greater than or equal to constraints.classEarliestStartMinutes"
         )
 
+    lunch_cfg_raw = constraints_cfg.get("lunchBreak")
+    lunch_break_enabled = True
+    lunch_window_start_minutes = 10 * 60 + 30
+    lunch_window_end_minutes = 12 * 60 + 30
+    lunch_duration_minutes = 30
+    lunch_granularity_minutes = 5
+
+    if isinstance(lunch_cfg_raw, dict):
+        if "enabled" in lunch_cfg_raw:
+            enabled_value = lunch_cfg_raw["enabled"]
+            if isinstance(enabled_value, str):
+                lunch_break_enabled = enabled_value.strip().lower() not in {"false", "0", "no", "off"}
+            else:
+                lunch_break_enabled = bool(enabled_value)
+        if lunch_break_enabled:
+            if lunch_cfg_raw.get("windowStart") is not None:
+                lunch_window_start_minutes = _coerce_minutes_value(
+                    lunch_cfg_raw["windowStart"], "constraints.lunchBreak.windowStart"
+                )
+            if lunch_cfg_raw.get("windowEnd") is not None:
+                lunch_window_end_minutes = _coerce_minutes_value(
+                    lunch_cfg_raw["windowEnd"], "constraints.lunchBreak.windowEnd"
+                )
+            if lunch_cfg_raw.get("durationMinutes") is not None:
+                lunch_duration_minutes = _coerce_positive_int(
+                    lunch_cfg_raw["durationMinutes"], "constraints.lunchBreak.durationMinutes"
+                )
+            if lunch_cfg_raw.get("granularityMinutes") is not None:
+                lunch_granularity_minutes = _coerce_positive_int(
+                    lunch_cfg_raw["granularityMinutes"], "constraints.lunchBreak.granularityMinutes"
+                )
+
+    lunch_domain_values: List[int] = []
+    if lunch_break_enabled:
+        if lunch_window_end_minutes <= lunch_window_start_minutes:
+            raise ValueError("constraints.lunchBreak.windowEnd must be after windowStart")
+        if lunch_duration_minutes >= (lunch_window_end_minutes - lunch_window_start_minutes):
+            raise ValueError(
+                "constraints.lunchBreak.durationMinutes must be shorter than the lunch window length"
+            )
+        domain_start = lunch_window_start_minutes
+        domain_end = lunch_window_end_minutes - lunch_duration_minutes
+        if domain_end < domain_start:
+            raise ValueError("Lunch window does not allow the requested lunch duration")
+        cursor = domain_start
+        seen_values = set()
+        while cursor <= domain_end:
+            seen_values.add(cursor)
+            cursor += lunch_granularity_minutes
+        seen_values.add(domain_end)
+        lunch_domain_values = sorted(seen_values)
+
     classes: List[str] = [_extract_name(item) for item in data.get("classes", []) if _extract_name(item)]
     teachers: List[str] = [_extract_name(item) for item in data.get("teachers", []) if _extract_name(item)]
     classrooms: List[str] = [
@@ -682,8 +748,23 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
     if not available_time_slots:
         raise ValueError("Term configuration did not produce any teaching time slots")
 
-    slot_start_minutes = [slot["startMinutes"] for slot in available_time_slots]
+    total_weeks = term_cfg["weeks"]
     slot_signature_registry: Dict[tuple, int] = {}
+    day_lookup: Dict[tuple, Dict[str, Any]] = {}
+    slot_lookup_by_week_signature: Dict[tuple, int] = {}
+    base_slot_indices: List[int] = []
+    for idx, slot in enumerate(available_time_slots):
+        key = (slot["weekIndex"], slot["dayIndex"])
+        if key not in day_lookup:
+            day_lookup[key] = {"day": slot["day"], "dayName": slot["dayName"]}
+        slot_lookup_by_week_signature[(slot["weekIndex"], slot["dayIndex"], slot["start"], slot["end"])] = idx
+        if slot["weekIndex"] == 0:
+            base_slot_indices.append(idx)
+
+    if not base_slot_indices:
+        raise ValueError("Term configuration requires at least one week of time slots")
+
+    slot_start_minutes = {idx: available_time_slots[idx]["startMinutes"] for idx in base_slot_indices}
 
     subject_color_index: Dict[str, int] = {}
     sessions: List[Dict[str, Any]] = []
@@ -705,18 +786,22 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
             if preferred_room not in allowed_rooms:
                 allowed_rooms.insert(0, preferred_room)
 
-        color_seed = subject_color_index.setdefault(
-            template["subjectName"], len(subject_color_index)
+        subject_name = template["subjectName"]
+        normalized_subject = subject_name.strip().lower()
+        requires_buffer_after = any(
+            keyword in normalized_subject for keyword in physical_education_keywords
         )
+
+        color_seed = subject_color_index.setdefault(subject_name, len(subject_color_index))
         color_index = color_seed % 5
 
         for occurrence_index in range(template["sessionsPerWeek"]):
-            for week_index in range(term_cfg["weeks"]):
+            for week_index in range(total_weeks):
                 sessions.append(
                     {
                         "className": template["className"],
                         "teacherName": template["teacherName"],
-                        "subjectName": template["subjectName"],
+                        "subjectName": subject_name,
                         "duration": template["duration"],
                         "weekIndex": week_index,
                         "templateIndex": template_index,
@@ -724,8 +809,8 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                         "colorIndex": color_index,
                         "preferredRoom": preferred_room,
                         "roomDomainNames": allowed_rooms[:],
-                        "requiresBufferAfter": template["subjectName"].strip().lower()
-                        in physical_education_subjects,
+                        "requiresBufferAfter": requires_buffer_after,
+                        "isLunch": False,
                     }
                 )
 
@@ -740,12 +825,17 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
     if total_sessions == 0:
         raise ValueError("lessonTemplates did not produce any sessions to schedule")
 
+    lunch_break_keys: List[tuple] = []
+    if lunch_break_enabled and lunch_domain_values:
+        for class_index, _ in enumerate(classes):
+            for day in term_cfg["days"]:
+                lunch_break_keys.append((class_index, 0, day["index"]))
+
     for session in sessions:
         eligible_slots = [
             idx
-            for idx, slot in enumerate(available_time_slots)
-            if slot["weekIndex"] == session["weekIndex"]
-            and slot["duration"] >= session["duration"]
+            for idx in base_slot_indices
+            if available_time_slots[idx]["duration"] >= session["duration"]
         ]
         if not eligible_slots:
             raise ValueError(
@@ -815,6 +905,20 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
     teacher_day_candidates: Dict[tuple, List[int]] = defaultdict(list)
     class_day_candidates: Dict[tuple, List[int]] = defaultdict(list)
     template_occurrence_groups: Dict[tuple, List[int]] = defaultdict(list)
+
+    lunch_break_vars: Dict[tuple, Int] = {}
+    if lunch_break_keys:
+        for class_index, week_index, day_index in lunch_break_keys:
+            lunch_var = Int(f"lunch_{class_index}_{week_index}_{day_index}")
+            lunch_break_vars[(class_index, week_index, day_index)] = lunch_var
+            label = f"lunch_break_domain_{class_index}_{week_index}_{day_index}"
+            if len(lunch_domain_values) == 1:
+                add_constraint(lunch_var == lunch_domain_values[0], label)
+            else:
+                add_constraint(
+                    Or(*[lunch_var == value for value in lunch_domain_values]),
+                    label,
+                )
 
     def prohibit_large_idle_gaps(
         indices: List[int],
@@ -993,6 +1097,20 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
             class_day_candidates[(session["classIndex"], session["weekIndex"], day_index)].append(
                 idx
             )
+            if lunch_break_vars:
+                lunch_var = lunch_break_vars.get((session["classIndex"], session["weekIndex"], day_index))
+                if lunch_var is not None:
+                    lunch_end_expr = lunch_var + lunch_duration_minutes
+                    for slot_index in session["slotDomainByDay"].get(day_index, []):
+                        slot_start = slot_start_minutes[slot_index]
+                        slot_end = slot_start + session["duration"]
+                        add_constraint(
+                            Implies(
+                                And(day_vars[idx] == day_index, slot_vars[idx] == slot_index),
+                                Or(slot_end <= lunch_var, slot_start >= lunch_end_expr),
+                            ),
+                            f"class_lunch_window_{idx}_{day_index}_{slot_index}",
+                        )
 
     for idx in range(total_sessions):
         add_constraint(
@@ -1014,14 +1132,15 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                 f"weekly_pattern_day_{base_idx}_{other_idx}",
             )
 
-    for indices in subject_sessions_by_week_class.values():
-        if len(indices) > 1:
-            for i in range(len(indices)):
-                for j in range(i + 1, len(indices)):
-                    add_constraint(
-                        day_vars[indices[i]] != day_vars[indices[j]],
-                        f"subject_day_spread_{indices[i]}_{indices[j]}",
-                    )
+    if not disable_subject_spread:
+        for indices in subject_sessions_by_week_class.values():
+            if len(indices) > 1:
+                for i in range(len(indices)):
+                    for j in range(i + 1, len(indices)):
+                        add_constraint(
+                            day_vars[indices[i]] != day_vars[indices[j]],
+                            f"subject_day_spread_{indices[i]}_{indices[j]}",
+                        )
 
     for (class_index, slot_index), indices in class_slot_candidates.items():
         if len(indices) <= 1:
@@ -1067,7 +1186,7 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                 max_teacher_idle_minutes,
                 f"teacher_idle_{teacher_index}_{week_index}_{day_index}",
             )
-        if len(indices) > 1:
+        if len(indices) > 1 and not disable_transition_buffers:
             enforce_transition_buffers(
                 indices,
                 day_index,
@@ -1088,7 +1207,7 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                 max_class_idle_minutes,
                 f"class_idle_{class_index}_{week_index}_{day_index}",
             )
-        if len(indices) > 1:
+        if len(indices) > 1 and not disable_transition_buffers:
             enforce_transition_buffers(
                 indices,
                 day_index,
@@ -1149,6 +1268,8 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
     model = solver.model()
     assignments: List[Dict[str, Any]] = []
     schedule_by_day: Dict[str, List[Dict[str, Any]]] = {}
+    scheduled_class_days: Dict[tuple, int] = defaultdict(int)
+    resolved_sessions_info: List[Dict[str, Any]] = []
 
     for idx, session in enumerate(sessions):
         slot_idx = model.eval(slot_vars[idx]).as_long()
@@ -1162,6 +1283,8 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
 
         start_minutes = slot["startMinutes"]
         end_minutes = start_minutes + session["duration"]
+
+        scheduled_class_days[(session["classIndex"], slot["weekIndex"], slot["dayIndex"])] += 1
 
         assignment = {
             "subject": subject_name,
@@ -1194,6 +1317,171 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
         }
 
         schedule_by_day.setdefault(slot["day"], []).append(schedule_entry)
+
+        resolved_sessions_info.append(
+            {
+                "baseIndex": idx,
+                "classIndex": session["classIndex"],
+                "className": class_name,
+                "teacherName": teacher_name,
+                "subjectName": subject_name,
+                "roomName": room_name,
+                "duration": session["duration"],
+                "colorIndex": session["colorIndex"],
+                "slotSignature": (slot["dayIndex"], slot["start"], slot["end"]),
+            }
+        )
+
+    if total_weeks > 1:
+        base_session_count = len(sessions)
+        for week_idx in range(1, total_weeks):
+            for info in resolved_sessions_info:
+                day_index, start_str, end_str = info["slotSignature"]
+                slot_key = (week_idx, day_index, start_str, end_str)
+                slot_idx = slot_lookup_by_week_signature.get(slot_key)
+                if slot_idx is None:
+                    raise RuntimeError(
+                        "Could not find matching time slot in subsequent weeks while replicating schedule pattern"
+                    )
+                slot = available_time_slots[slot_idx]
+                start_minutes = slot["startMinutes"]
+                end_minutes = start_minutes + info["duration"]
+
+                scheduled_class_days[(info["classIndex"], week_idx, day_index)] += 1
+
+                assignment = {
+                    "subject": info["subjectName"],
+                    "class": info["className"],
+                    "teacher": info["teacherName"],
+                    "classroom": info["roomName"],
+                    "durationMinutes": info["duration"],
+                    "termWeek": week_idx + 1,
+                    "timeSlot": {
+                        "day": slot["day"],
+                        "dayName": slot["dayName"],
+                        "start": _minutes_to_clock(start_minutes),
+                        "end": _minutes_to_clock(end_minutes),
+                        "weekIndex": week_idx + 1,
+                    },
+                }
+                assignments.append(assignment)
+
+                schedule_entry = {
+                    "id": info["baseIndex"] + week_idx * base_session_count,
+                    "name": f"{info['subjectName']} ({info['className']})",
+                    "subject": info["subjectName"],
+                    "classRef": info["className"],
+                    "teacher": info["teacherName"],
+                    "classroom": info["roomName"],
+                    "startMinutes": start_minutes,
+                    "duration": info["duration"],
+                    "colorIndex": info["colorIndex"],
+                    "termWeek": week_idx + 1,
+                }
+
+                schedule_by_day.setdefault(slot["day"], []).append(schedule_entry)
+
+    if lunch_break_vars:
+        lunch_entry_offset = len(sessions) * total_weeks
+        lunch_counter = 0
+        resolved_lunches: List[Dict[str, Any]] = []
+        for (class_index, week_index, day_index), lunch_var in lunch_break_vars.items():
+            if scheduled_class_days.get((class_index, week_index, day_index), 0) == 0:
+                continue
+            day_info = day_lookup.get((week_index, day_index))
+            if not day_info:
+                continue
+            lunch_start = model.eval(lunch_var).as_long()
+            lunch_end = lunch_start + lunch_duration_minutes
+            class_name = classes[class_index]
+            day_key = day_info["day"]
+            entry_id = lunch_entry_offset + lunch_counter
+            lunch_counter += 1
+
+            assignment = {
+                "subject": "Lunch",
+                "class": class_name,
+                "teacher": "",
+                "classroom": "",
+                "durationMinutes": lunch_duration_minutes,
+                "termWeek": week_index + 1,
+                "timeSlot": {
+                    "day": day_key,
+                    "dayName": day_info["dayName"],
+                    "start": _minutes_to_clock(lunch_start),
+                    "end": _minutes_to_clock(lunch_end),
+                    "weekIndex": week_index + 1,
+                },
+            }
+            assignments.append(assignment)
+
+            schedule_entry = {
+                "id": entry_id,
+                "name": f"Lunch ({class_name})",
+                "subject": "Lunch",
+                "classRef": class_name,
+                "teacher": "",
+                "classroom": "",
+                "startMinutes": lunch_start,
+                "duration": lunch_duration_minutes,
+                "colorIndex": 5,
+                "termWeek": week_index + 1,
+                "isLunch": True,
+            }
+            schedule_by_day.setdefault(day_key, []).append(schedule_entry)
+
+            resolved_lunches.append(
+                {
+                    "classIndex": class_index,
+                    "className": class_name,
+                    "dayIndex": day_index,
+                    "startMinutes": lunch_start,
+                }
+            )
+
+        if total_weeks > 1:
+            for week_idx in range(1, total_weeks):
+                for info in resolved_lunches:
+                    day_info = day_lookup.get((week_idx, info["dayIndex"]))
+                    if not day_info:
+                        continue
+                    class_name = info["className"]
+                    lunch_start = info["startMinutes"]
+                    lunch_end = lunch_start + lunch_duration_minutes
+                    scheduled_class_days[(info["classIndex"], week_idx, info["dayIndex"])] += 1
+
+                    assignment = {
+                        "subject": "Lunch",
+                        "class": class_name,
+                        "teacher": "",
+                        "classroom": "",
+                        "durationMinutes": lunch_duration_minutes,
+                        "termWeek": week_idx + 1,
+                        "timeSlot": {
+                            "day": day_info["day"],
+                            "dayName": day_info["dayName"],
+                            "start": _minutes_to_clock(lunch_start),
+                            "end": _minutes_to_clock(lunch_end),
+                            "weekIndex": week_idx + 1,
+                        },
+                    }
+                    assignments.append(assignment)
+
+                    schedule_entry = {
+                        "id": lunch_entry_offset + lunch_counter,
+                        "name": f"Lunch ({class_name})",
+                        "subject": "Lunch",
+                        "classRef": class_name,
+                        "teacher": "",
+                        "classroom": "",
+                        "startMinutes": lunch_start,
+                        "duration": lunch_duration_minutes,
+                        "colorIndex": 5,
+                        "termWeek": week_idx + 1,
+                        "isLunch": True,
+                    }
+                    lunch_counter += 1
+                    schedule_by_day.setdefault(day_info["day"], []).append(schedule_entry)
 
     for entries in schedule_by_day.values():
         entries.sort(key=lambda item: item["startMinutes"])
