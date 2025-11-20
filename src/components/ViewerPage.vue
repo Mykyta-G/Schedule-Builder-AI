@@ -312,7 +312,7 @@
 </template>
 
 <script>
-import { defineComponent, ref, reactive, computed, watch, onUnmounted } from 'vue';
+import { defineComponent, ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
 import Sidebar from './Sidebar.vue';
@@ -634,6 +634,20 @@ export default defineComponent({
         }))
         .filter((slot) => slot.start && slot.end);
     };
+    
+    // Helper to parse time string "HH:MM" to minutes
+    const parseTimeToMinutes = (timeString) => {
+      try {
+        const [hours, minutes] = timeString.split(':').map(Number);
+        if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+          return null;
+        }
+        return hours * 60 + minutes;
+      } catch (error) {
+        console.error('[ViewerPage] Error parsing time', { timeString, error });
+        return null;
+      }
+    };
 
     const isBuildReady = computed(() => {
       return (
@@ -653,14 +667,16 @@ export default defineComponent({
       try {
         console.log('[ViewerPage] Navigating to constraints page', { 
           presetId: props.presetId,
-          hasSolverOptions: !!solverOptions
+          hasSolverOptions: !!solverOptions,
+          hasCustomConstraints: !!customConstraints.value
         });
         
         window.dispatchEvent(new CustomEvent('navigate', { 
           detail: { 
             page: 'constraints',
             presetId: props.presetId,
-            solverOptions: { ...solverOptions }
+            solverOptions: { ...solverOptions },
+            customConstraints: customConstraints.value
           } 
         }));
       } catch (error) {
@@ -899,7 +915,85 @@ export default defineComponent({
         });
       }
 
-    if (solverOptions.relaxedConstraints || solverOptions.includeLunch) {
+    // Use custom constraints if available, otherwise compute from solverOptions
+    if (customConstraints.value && Object.keys(customConstraints.value).length > 0) {
+      console.log('[ViewerPage] Using custom constraints for buildWithSolver', { 
+        constraintsCount: Object.keys(customConstraints.value).length,
+        presetId: props.presetId,
+        constraints: JSON.stringify(customConstraints.value)
+      });
+      
+      // Merge custom constraints with defaults (custom overrides defaults)
+      const merged = {
+        ...CONSTRAINT_DEFAULTS,
+        ...customConstraints.value,
+        lunchBreak: {
+          ...CONSTRAINT_DEFAULTS.lunchBreak,
+          ...(customConstraints.value.lunchBreak || {})
+        }
+      };
+      
+      // Validate constraint values before sending
+      if (merged.classEarliestStartMinutes !== undefined && merged.classLatestStartMinutes !== undefined) {
+        const earliest = merged.classEarliestStartMinutes;
+        const latest = merged.classLatestStartMinutes;
+        const windowMinutes = latest - earliest;
+        
+        console.log('[ViewerPage] Validating class start time constraints', {
+          earliestMinutes: earliest,
+          earliestTime: `${Math.floor(earliest/60)}:${String(earliest%60).padStart(2,'0')}`,
+          latestMinutes: latest,
+          latestTime: `${Math.floor(latest/60)}:${String(latest%60).padStart(2,'0')}`,
+          windowMinutes,
+          windowHours: (windowMinutes/60).toFixed(2)
+        });
+        
+        if (latest <= earliest) {
+          console.error('[ViewerPage] Invalid constraint: latest <= earliest', {
+            earliest,
+            latest
+          });
+          solverError.value = `Ogiltiga begränsningar: Senaste starttid (${Math.floor(latest/60)}:${String(latest%60).padStart(2,'0')}) måste vara efter tidigaste starttid (${Math.floor(earliest/60)}:${String(earliest%60).padStart(2,'0')})`;
+          cancelSolverLoading();
+          return;
+        }
+        
+        // Check available time slots
+        const availableSlots = payload.term?.dailySlots || payload.timeSlots || [];
+        const slotsInWindow = availableSlots.filter(slot => {
+          const slotStart = slot.start ? parseTimeToMinutes(slot.start) : null;
+          return slotStart !== null && slotStart >= earliest && slotStart <= latest;
+        });
+        
+        console.log('[ViewerPage] Time slot analysis', {
+          totalSlots: availableSlots.length,
+          slotsInWindow: slotsInWindow.length,
+          windowStart: `${Math.floor(earliest/60)}:${String(earliest%60).padStart(2,'0')}`,
+          windowEnd: `${Math.floor(latest/60)}:${String(latest%60).padStart(2,'0')}`,
+          availableSlots: availableSlots.map(s => s.start).join(', ')
+        });
+        
+        if (slotsInWindow.length === 0) {
+          console.warn('[ViewerPage] WARNING: No time slots fall within the specified window', {
+            earliest,
+            latest,
+            availableSlots: availableSlots.map(s => ({ start: s.start, end: s.end }))
+          });
+          solverError.value = `Varning: Inga tidsluckor finns inom det angivna fönstret (${Math.floor(earliest/60)}:${String(earliest%60).padStart(2,'0')} - ${Math.floor(latest/60)}:${String(latest%60).padStart(2,'0')}). Detta kan göra det omöjligt att skapa ett schema.`;
+          cancelSolverLoading();
+          return;
+        }
+      }
+      
+      console.log('[ViewerPage] Merged constraints for payload', {
+        mergedConstraintsCount: Object.keys(merged).length,
+        hasLunchBreak: !!merged.lunchBreak,
+        classEarliestStart: merged.classEarliestStartMinutes,
+        classLatestStart: merged.classLatestStartMinutes
+      });
+      
+      payload.constraints = merged;
+    } else if (solverOptions.relaxedConstraints || solverOptions.includeLunch) {
       const constraints = {};
       if (solverOptions.relaxedConstraints) {
         constraints.maxClassSessionsPerDay = 6;
@@ -932,7 +1026,26 @@ export default defineComponent({
     }
 
       try {
+        // Log the full payload being sent to solver for debugging
+        console.log('[ViewerPage] Sending payload to Z3 solver', {
+          payloadSize: JSON.stringify(payload).length,
+          hasConstraints: !!payload.constraints,
+          constraints: payload.constraints ? JSON.stringify(payload.constraints) : null,
+          lessonTemplatesCount: payload.lessonTemplates?.length || 0,
+          timeSlotsCount: payload.timeSlots?.length || 0,
+          dailySlotsCount: payload.term?.dailySlots?.length || 0,
+          classEarliestStart: payload.constraints?.classEarliestStartMinutes,
+          classLatestStart: payload.constraints?.classLatestStartMinutes
+        });
+        
         const response = await window.api.runScheduleSolver(JSON.parse(JSON.stringify(payload)));
+        
+        console.log('[ViewerPage] Received response from Z3 solver', {
+          success: response?.success,
+          hasSchedule: !!response?.scheduleByDay,
+          assignmentsCount: Array.isArray(response?.assignments) ? response.assignments.length : 0
+        });
+        
         generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
         solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
         buildSuccess.value = true;
@@ -943,6 +1056,16 @@ export default defineComponent({
         ensureSelectedDayForSchedule(generatedSchedule.value || {}, { force: true });
         finishSolverLoading();
       } catch (error) {
+        console.error('[ViewerPage] Z3 solver error', {
+          errorMessage: error?.message,
+          errorStack: error?.stack,
+          errorName: error?.name,
+          payloadConstraints: payload.constraints ? JSON.stringify(payload.constraints) : null,
+          constraintWindow: payload.constraints ? {
+            earliest: payload.constraints.classEarliestStartMinutes,
+            latest: payload.constraints.classLatestStartMinutes
+          } : null
+        });
         solverError.value = error?.message || 'Failed to build schedule with Z3 solver.';
         cancelSolverLoading();
       } finally {
@@ -1121,6 +1244,30 @@ export default defineComponent({
     debugMode: false,
     lunchGranularity: 30,
   });
+
+  // Custom constraints from ConstraintsPage
+  const customConstraints = ref(null);
+
+  // Constraint defaults (matching Python solver)
+  const CONSTRAINT_DEFAULTS = {
+    maxClassIdleMinutes: 120,
+    maxTeacherIdleMinutes: 180,
+    maxClassSessionsPerDay: 5,
+    maxTeacherSessionsPerDay: 3,
+    disableSubjectSpread: false,
+    disableTransitionBuffers: false,
+    physicalEducationBufferMinutes: 15,
+    physicalEducationSubjects: ['Idrott och hälsa 1', 'Idrott', 'Gymnastik'],
+    classEarliestStartMinutes: 480,
+    classLatestStartMinutes: 600,
+    lunchBreak: {
+      enabled: true,
+      windowStart: '10:30',
+      windowEnd: '12:30',
+      durationMinutes: 30,
+      granularityMinutes: 5
+    }
+  };
 
     const loadMinimalMockData = () => {
       solverError.value = null;
@@ -1331,8 +1478,100 @@ export default defineComponent({
       { immediate: true, deep: true }
     );
 
+    // Listen for constraints updates from ConstraintsPage
+    const handleConstraintsUpdate = (event) => {
+      try {
+        const { constraints, presetId: eventPresetId } = event.detail;
+        
+        console.log('[ViewerPage] Received constraints-updated event', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          eventPresetId,
+          currentPresetId: props.presetId,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Verify presetId matches (if provided)
+        if (eventPresetId && eventPresetId !== props.presetId) {
+          console.warn('[ViewerPage] Constraints update preset mismatch', {
+            eventPresetId,
+            currentPresetId: props.presetId
+          });
+          return;
+        }
+        
+        // Store custom constraints
+        customConstraints.value = constraints;
+        
+        console.log('[ViewerPage] Constraints stored successfully', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          presetId: props.presetId,
+          constraints: JSON.stringify(constraints)
+        });
+      } catch (error) {
+        console.error('[ViewerPage] Error handling constraints update', error, {
+          presetId: props.presetId,
+          errorMessage: error?.message,
+          errorStack: error?.stack
+        });
+      }
+    };
+    
+    // Also listen for the App.vue forwarded event
+    const handleConstraintsUpdateFromApp = (event) => {
+      try {
+        const { constraints, presetId: eventPresetId } = event.detail;
+        
+        console.log('[ViewerPage] Received constraints-updated-viewer event from App', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          eventPresetId,
+          currentPresetId: props.presetId
+        });
+        
+        if (eventPresetId && eventPresetId !== props.presetId) {
+          console.warn('[ViewerPage] Constraints update preset mismatch (from App)', {
+            eventPresetId,
+            currentPresetId: props.presetId
+          });
+          return;
+        }
+        
+        customConstraints.value = constraints;
+        
+        console.log('[ViewerPage] Constraints stored from App event', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          presetId: props.presetId
+        });
+      } catch (error) {
+        console.error('[ViewerPage] Error handling constraints update from App', error);
+      }
+    };
+
+    onMounted(() => {
+      window.addEventListener('constraints-updated', handleConstraintsUpdate);
+      window.addEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
+      
+      // Request stored constraints from App.vue if we don't have any
+      if (!customConstraints.value) {
+        console.log('[ViewerPage] Requesting stored constraints from App', {
+          presetId: props.presetId
+        });
+        
+        // Dispatch event to request constraints from App.vue
+        window.dispatchEvent(new CustomEvent('request-constraints', {
+          detail: { presetId: props.presetId }
+        }));
+      } else {
+        console.log('[ViewerPage] Already has custom constraints', {
+          constraintsCount: Object.keys(customConstraints.value || {}).length,
+          presetId: props.presetId
+        });
+      }
+    });
+
     onUnmounted(() => {
       clearProgressTimers();
+      window.removeEventListener('constraints-updated', handleConstraintsUpdate);
+      window.removeEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
     });
 
     return {

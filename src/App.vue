@@ -12,7 +12,7 @@
     <HomePage v-if="currentPage === 'home'" />
     <CreatorPage v-else-if="currentPage === 'creator'" />
     <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" />
-    <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" />
+    <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" :custom-constraints="constraintsCustomConstraints" />
   </div>
 </template>
 
@@ -36,6 +36,12 @@ export default defineComponent({
     const selectedPresetId = ref(null);
     const mockData = ref(null);
     const constraintsSolverOptions = ref(null);
+    const constraintsCustomConstraints = ref(null);
+    
+    // Store constraints globally so ViewerPage can access them when it remounts
+    // This is needed because ViewerPage is unmounted when on ConstraintsPage
+    const globalCustomConstraints = ref(null);
+    const globalConstraintsPresetId = ref(null);
     const bubbles = ref([]);
     let bubbleInterval = null;
     let bubbleIdCounter = 0;
@@ -121,6 +127,89 @@ export default defineComponent({
         if (event.detail.solverOptions) {
           constraintsSolverOptions.value = event.detail.solverOptions;
         }
+        // Capture customConstraints for constraints page
+        if (event.detail.customConstraints) {
+          constraintsCustomConstraints.value = event.detail.customConstraints;
+          // Also store globally for ViewerPage
+          globalCustomConstraints.value = event.detail.customConstraints;
+          globalConstraintsPresetId.value = event.detail.presetId || null;
+        } else if (event.detail.page !== 'constraints') {
+          // Clear customConstraints when navigating away from constraints page
+          constraintsCustomConstraints.value = null;
+        }
+      });
+      
+      // Listen for constraints-updated event (always active since App.vue is always mounted)
+      window.addEventListener('constraints-updated', (event) => {
+        try {
+          const { constraints, presetId } = event.detail;
+          console.log('[App] Received constraints-updated event', {
+            constraintsCount: Object.keys(constraints || {}).length,
+            presetId,
+            timestamp: new Date().toISOString(),
+            constraints: JSON.stringify(constraints)
+          });
+          
+          // Store globally so ViewerPage can access when it remounts
+          globalCustomConstraints.value = constraints;
+          globalConstraintsPresetId.value = presetId;
+          
+          // Also update constraintsCustomConstraints if we're on constraints page
+          if (currentPage.value === 'constraints') {
+            constraintsCustomConstraints.value = constraints;
+          }
+          
+          // Dispatch to ViewerPage if it's mounted (it will also listen directly)
+          // This ensures ViewerPage gets the update even if it's currently mounted
+          window.dispatchEvent(new CustomEvent('constraints-updated-viewer', {
+            detail: { constraints, presetId }
+          }));
+          
+          console.log('[App] Constraints stored and forwarded', {
+            stored: !!globalCustomConstraints.value,
+            forwarded: true
+          });
+        } catch (error) {
+          console.error('[App] Error handling constraints-updated event', error, {
+            errorMessage: error?.message,
+            errorStack: error?.stack
+          });
+        }
+      });
+      
+      // Listen for requests from ViewerPage to get stored constraints
+      window.addEventListener('request-constraints', (event) => {
+        try {
+          const { presetId } = event.detail;
+          console.log('[App] Received request-constraints', {
+            requestedPresetId: presetId,
+            storedPresetId: globalConstraintsPresetId.value,
+            hasStoredConstraints: !!globalCustomConstraints.value
+          });
+          
+          // If presetId matches and we have stored constraints, send them
+          if (globalCustomConstraints.value && 
+              (!presetId || presetId === globalConstraintsPresetId.value)) {
+            console.log('[App] Sending stored constraints to ViewerPage', {
+              constraintsCount: Object.keys(globalCustomConstraints.value || {}).length,
+              presetId: globalConstraintsPresetId.value
+            });
+            
+            window.dispatchEvent(new CustomEvent('constraints-updated-viewer', {
+              detail: { 
+                constraints: globalCustomConstraints.value, 
+                presetId: globalConstraintsPresetId.value 
+              }
+            }));
+          } else {
+            console.log('[App] No matching stored constraints to send', {
+              hasStored: !!globalCustomConstraints.value,
+              presetIdMatch: presetId === globalConstraintsPresetId.value
+            });
+          }
+        } catch (error) {
+          console.error('[App] Error handling request-constraints', error);
+        }
       });
 
       // Create initial bubbles immediately (more bubbles, faster)
@@ -171,6 +260,9 @@ export default defineComponent({
       selectedPresetId,
       mockData,
       constraintsSolverOptions,
+      constraintsCustomConstraints,
+      globalCustomConstraints,
+      globalConstraintsPresetId,
       bubbles,
     };
   },
