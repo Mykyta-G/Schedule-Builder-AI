@@ -1641,10 +1641,13 @@ export default defineComponent({
     const goBack = () => {
       try {
         logInfo('NAVIGATE_FROM_CONSTRAINTS', { presetId: props.presetId });
+        // Pass back solverOptions and customConstraints so ViewerPage can restore them
         window.dispatchEvent(new CustomEvent('navigate', { 
           detail: { 
             page: 'viewer',
-            presetId: props.presetId
+            presetId: props.presetId,
+            solverOptions: props.solverOptions,
+            customConstraints: props.customConstraints
           } 
         }));
       } catch (error) {

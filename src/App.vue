@@ -11,7 +11,7 @@
     </div>
     <HomePage v-if="currentPage === 'home'" />
     <CreatorPage v-else-if="currentPage === 'creator'" />
-    <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" />
+    <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" :saved-state="viewerPageState" @save-state="handleViewerPageStateSave" />
     <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" :custom-constraints="constraintsCustomConstraints" />
   </div>
 </template>
@@ -42,6 +42,9 @@ export default defineComponent({
     // This is needed because ViewerPage is unmounted when on ConstraintsPage
     const globalCustomConstraints = ref(null);
     const globalConstraintsPresetId = ref(null);
+    
+    // Store ViewerPage state globally so it persists when navigating to/from ConstraintsPage
+    const viewerPageState = ref(null);
     const bubbles = ref([]);
     let bubbleInterval = null;
     let bubbleIdCounter = 0;
@@ -117,16 +120,33 @@ export default defineComponent({
       }, duration * 1000 + 500);
     };
 
+    // Handle ViewerPage state save events (called via emit from ViewerPage)
+    const handleViewerPageStateSave = (state) => {
+      if (state && state.presetId) {
+        viewerPageState.value = state;
+        console.log('[App] Saved ViewerPage state', {
+          hasState: !!state,
+          presetId: state.presetId,
+          hasClasses: state.classes?.length > 0,
+          hasTeachers: state.teachers?.length > 0,
+          hasTimeSlots: state.timeSlots?.length > 0
+        });
+      }
+    };
+
     onMounted(() => {
       // Listen for navigation events
       window.addEventListener('navigate', (event) => {
+        const previousPage = currentPage.value;
         currentPage.value = event.detail.page;
         selectedPresetId.value = event.detail.presetId || null;
         mockData.value = event.detail.mockData || null;
+        
         // Capture solverOptions for constraints page
         if (event.detail.solverOptions) {
           constraintsSolverOptions.value = event.detail.solverOptions;
         }
+        
         // Capture customConstraints for constraints page
         if (event.detail.customConstraints) {
           constraintsCustomConstraints.value = event.detail.customConstraints;
@@ -136,6 +156,20 @@ export default defineComponent({
         } else if (event.detail.page !== 'constraints') {
           // Clear customConstraints when navigating away from constraints page
           constraintsCustomConstraints.value = null;
+        }
+        
+        // Preserve ViewerPage state when navigating to/from constraints
+        if (previousPage === 'viewer' && event.detail.page === 'constraints') {
+          // State will be saved by ViewerPage before unmounting
+          console.log('[App] Navigating to constraints, preserving ViewerPage state', {
+            hasState: !!viewerPageState.value
+          });
+        } else if (previousPage === 'constraints' && event.detail.page === 'viewer') {
+          // State will be restored when ViewerPage mounts
+          console.log('[App] Navigating back to viewer, will restore state', {
+            hasState: !!viewerPageState.value,
+            presetId: selectedPresetId.value
+          });
         }
       });
       
@@ -263,6 +297,8 @@ export default defineComponent({
       constraintsCustomConstraints,
       globalCustomConstraints,
       globalConstraintsPresetId,
+      viewerPageState,
+      handleViewerPageStateSave,
       bubbles,
     };
   },

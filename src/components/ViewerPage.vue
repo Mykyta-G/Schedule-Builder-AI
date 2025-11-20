@@ -331,8 +331,13 @@ export default defineComponent({
       type: Object,
       default: null,
     },
+    savedState: {
+      type: Object,
+      default: null,
+    },
   },
-  setup(props) {
+  emits: ['save-state'],
+  setup(props, { emit }) {
     const title = ref('');
     const description = ref('');
     const schedule = ref({});
@@ -665,6 +670,9 @@ export default defineComponent({
 
     const goToConstraints = () => {
       try {
+        // Save state before navigating away
+        saveState();
+        
         console.log('[ViewerPage] Navigating to constraints page', { 
           presetId: props.presetId,
           hasSolverOptions: !!solverOptions,
@@ -1546,9 +1554,89 @@ export default defineComponent({
       }
     };
 
+    // Save current state
+    const saveState = () => {
+      const state = {
+        presetId: props.presetId,
+        classes: [...classes.value],
+        teachers: [...teachers.value],
+        classrooms: [...classrooms.value],
+        subjects: [...subjects.value],
+        timeSlots: [...timeSlots.value],
+        termConfig: termConfig.value ? JSON.parse(JSON.stringify(termConfig.value)) : null,
+        lessonTemplates: [...lessonTemplates.value],
+        solverOptions: JSON.parse(JSON.stringify(solverOptions)),
+        customConstraints: customConstraints.value ? JSON.parse(JSON.stringify(customConstraints.value)) : null,
+        isCreatorMode: isCreatorMode.value,
+        generatedSchedule: generatedSchedule.value ? JSON.parse(JSON.stringify(generatedSchedule.value)) : null,
+        solverAssignments: [...solverAssignments.value],
+        selectedClassFilter: selectedClassFilter.value,
+        selectedDayKey: selectedDayKey.value,
+        schedule: schedule.value ? JSON.parse(JSON.stringify(schedule.value)) : null,
+        buildSuccess: buildSuccess.value
+      };
+      emit('save-state', state);
+      console.log('[ViewerPage] State saved', {
+        presetId: props.presetId,
+        hasClasses: classes.value.length > 0,
+        hasTeachers: teachers.value.length > 0,
+        hasTimeSlots: timeSlots.value.length > 0
+      });
+    };
+    
+    // Restore state from saved state
+    const restoreState = () => {
+      if (!props.savedState || props.savedState.presetId !== props.presetId) {
+        console.log('[ViewerPage] No saved state to restore', {
+          hasSavedState: !!props.savedState,
+          savedPresetId: props.savedState?.presetId,
+          currentPresetId: props.presetId
+        });
+        return;
+      }
+      
+      const saved = props.savedState;
+      console.log('[ViewerPage] Restoring saved state', {
+        presetId: props.presetId,
+        hasClasses: saved.classes?.length > 0,
+        hasTeachers: saved.teachers?.length > 0,
+        hasTimeSlots: saved.timeSlots?.length > 0
+      });
+      
+      if (saved.classes) classes.value = [...saved.classes];
+      if (saved.teachers) teachers.value = [...saved.teachers];
+      if (saved.classrooms) classrooms.value = [...saved.classrooms];
+      if (saved.subjects) subjects.value = [...saved.subjects];
+      if (saved.timeSlots) timeSlots.value = [...saved.timeSlots];
+      if (saved.termConfig) termConfig.value = JSON.parse(JSON.stringify(saved.termConfig));
+      if (saved.lessonTemplates) lessonTemplates.value = [...saved.lessonTemplates];
+      if (saved.solverOptions) {
+        Object.assign(solverOptions, saved.solverOptions);
+      }
+      if (saved.customConstraints) customConstraints.value = JSON.parse(JSON.stringify(saved.customConstraints));
+      if (saved.isCreatorMode !== undefined) isCreatorMode.value = saved.isCreatorMode;
+      if (saved.generatedSchedule) generatedSchedule.value = JSON.parse(JSON.stringify(saved.generatedSchedule));
+      if (saved.solverAssignments) solverAssignments.value = [...saved.solverAssignments];
+      if (saved.selectedClassFilter) selectedClassFilter.value = saved.selectedClassFilter;
+      if (saved.selectedDayKey) selectedDayKey.value = saved.selectedDayKey;
+      if (saved.schedule) schedule.value = JSON.parse(JSON.stringify(saved.schedule));
+      if (saved.buildSuccess !== undefined) buildSuccess.value = saved.buildSuccess;
+      
+      // Restore displayed schedule if available
+      if (generatedSchedule.value) {
+        displayedSchedule.value = generatedSchedule.value;
+        ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
+      }
+      
+      console.log('[ViewerPage] State restored successfully');
+    };
+
     onMounted(() => {
       window.addEventListener('constraints-updated', handleConstraintsUpdate);
       window.addEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
+      
+      // Restore saved state if available
+      restoreState();
       
       // Request stored constraints from App.vue if we don't have any
       if (!customConstraints.value) {
@@ -1569,6 +1657,9 @@ export default defineComponent({
     });
 
     onUnmounted(() => {
+      // Save state before unmounting
+      saveState();
+      
       clearProgressTimers();
       window.removeEventListener('constraints-updated', handleConstraintsUpdate);
       window.removeEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
