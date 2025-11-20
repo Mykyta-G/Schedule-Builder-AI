@@ -13,12 +13,6 @@
             Spara
           </button>
           <button 
-            @click="cancelEdit()"
-            class="cancel-btn"
-          >
-            Avbryt
-          </button>
-          <button 
             @click="resetToDefaults()"
             class="reset-btn"
           >
@@ -1404,61 +1398,6 @@ export default defineComponent({
       }
     };
 
-    // Cancel edits
-    const cancelEdit = () => {
-      try {
-        logInfo('CANCEL_EDIT', { 
-          hadUnsavedChanges: hasUnsavedChanges.value
-        });
-        
-        if (!originalConstraints.value) {
-          logWarning('CANCEL_EDIT_NO_ORIGINAL', {});
-          exitEditMode();
-          return;
-        }
-        
-        const original = originalConstraints.value;
-        
-        customConstraints.maxClassIdleMinutes = original.maxClassIdleMinutes;
-        customConstraints.maxTeacherIdleMinutes = original.maxTeacherIdleMinutes;
-        customConstraints.maxClassSessionsPerDay = original.maxClassSessionsPerDay;
-        customConstraints.maxTeacherSessionsPerDay = original.maxTeacherSessionsPerDay;
-        customConstraints.disableSubjectSpread = original.disableSubjectSpread;
-        customConstraints.disableTransitionBuffers = original.disableTransitionBuffers;
-        customConstraints.physicalEducationBufferMinutes = original.physicalEducationBufferMinutes;
-        customConstraints.physicalEducationSubjects = Array.isArray(original.physicalEducationSubjects)
-          ? [...original.physicalEducationSubjects]
-          : original.physicalEducationSubjects;
-        customConstraints.classEarliestStartMinutes = original.classEarliestStartMinutes;
-        customConstraints.classLatestStartMinutes = original.classLatestStartMinutes;
-        customConstraints.lunchBreak = {
-          enabled: original.lunchBreak.enabled,
-          windowStart: original.lunchBreak.windowStart,
-          windowEnd: original.lunchBreak.windowEnd,
-          durationMinutes: original.lunchBreak.durationMinutes,
-          granularityMinutes: original.lunchBreak.granularityMinutes
-        };
-        
-        Object.keys(editedFields).forEach(key => {
-          if (key !== 'lunchBreak') {
-            editedFields[key] = false;
-          }
-        });
-        Object.keys(editedFields.lunchBreak).forEach(key => {
-          editedFields.lunchBreak[key] = false;
-        });
-        
-        resetValidationErrors();
-        errorMessage.value = '';
-        exitEditMode();
-        
-        logInfo('CANCEL_EDIT_COMPLETE', {});
-      } catch (error) {
-        logError('CANCEL_EDIT', error);
-        errorMessage.value = 'Kunde inte ångra ändringar.';
-      }
-    };
-
     // Reset to defaults
     const resetToDefaults = () => {
       try {
@@ -1708,7 +1647,6 @@ export default defineComponent({
       enterEditMode,
       exitEditMode,
       saveConstraints,
-      cancelEdit,
       resetToDefaults,
       customConstraints,
       editedFields,
@@ -1855,7 +1793,7 @@ export default defineComponent({
   gap: 1vh;
 }
 
-.edit-mode-btn, .save-btn, .cancel-btn, .reset-btn {
+.edit-mode-btn, .save-btn, .reset-btn {
   padding: 0.8vh 1.5vh;
   border: none;
   border-radius: 0.5vh;
@@ -1887,15 +1825,6 @@ export default defineComponent({
   background: #9ca3af;
   cursor: not-allowed;
   opacity: 0.6;
-}
-
-.cancel-btn {
-  background: #6b7280;
-  color: white;
-}
-
-.cancel-btn:hover {
-  background: #4b5563;
 }
 
 .reset-btn {
