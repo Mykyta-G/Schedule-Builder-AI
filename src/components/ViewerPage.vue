@@ -17,6 +17,7 @@
         >
           Viewer
         </button>
+        <a href="#" @click.prevent="goToConstraints" class="variabler-link">Variabler</a>
       </div>
     </div>
     <div class="viewer-layout">
@@ -646,6 +647,25 @@ export default defineComponent({
 
     const goToHome = () => {
       window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
+    };
+
+    const goToConstraints = () => {
+      try {
+        console.log('[ViewerPage] Navigating to constraints page', { 
+          presetId: props.presetId,
+          hasSolverOptions: !!solverOptions
+        });
+        
+        window.dispatchEvent(new CustomEvent('navigate', { 
+          detail: { 
+            page: 'constraints',
+            presetId: props.presetId,
+            solverOptions: { ...solverOptions }
+          } 
+        }));
+      } catch (error) {
+        console.error('[ViewerPage] Error navigating to constraints', error, { presetId: props.presetId });
+      }
     };
 
     const toggleChat = () => {
@@ -1319,6 +1339,7 @@ export default defineComponent({
       title,
       description,
       goToHome,
+      goToConstraints,
       createSchedule,
       onScheduleChange,
       isChatOpen,
@@ -1410,6 +1431,29 @@ export default defineComponent({
   background: #f0f0f0;
   border-radius: 0.6vh;
   padding: 0.3vh;
+  align-items: center;
+}
+
+.variabler-link {
+  padding: 0.8vh 1.5vh;
+  border: none;
+  border-radius: 0.4vh;
+  background: transparent;
+  color: #718096;
+  font-size: 1.4vh;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.variabler-link:hover {
+  background: #fff;
+  color: #667eea;
+  box-shadow: 0 0.1vh 0.3vh rgba(0, 0, 0, 0.1);
 }
 
 .mode-btn {

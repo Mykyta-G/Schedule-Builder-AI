@@ -12,6 +12,7 @@
     <HomePage v-if="currentPage === 'home'" />
     <CreatorPage v-else-if="currentPage === 'creator'" />
     <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" />
+    <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" />
   </div>
 </template>
 
@@ -20,6 +21,7 @@ import { defineComponent, ref, onMounted, onUnmounted, nextTick } from 'vue';
 import HomePage from './components/HomePage.vue';
 import CreatorPage from './components/CreatorPage.vue';
 import ViewerPage from './components/ViewerPage.vue';
+import ConstraintsPage from './components/ConstraintsPage.vue';
 
 export default defineComponent({
   name: 'App',
@@ -27,11 +29,13 @@ export default defineComponent({
     HomePage,
     CreatorPage,
     ViewerPage,
+    ConstraintsPage,
   },
   setup() {
     const currentPage = ref('home');
     const selectedPresetId = ref(null);
     const mockData = ref(null);
+    const constraintsSolverOptions = ref(null);
     const bubbles = ref([]);
     let bubbleInterval = null;
     let bubbleIdCounter = 0;
@@ -113,6 +117,10 @@ export default defineComponent({
         currentPage.value = event.detail.page;
         selectedPresetId.value = event.detail.presetId || null;
         mockData.value = event.detail.mockData || null;
+        // Capture solverOptions for constraints page
+        if (event.detail.solverOptions) {
+          constraintsSolverOptions.value = event.detail.solverOptions;
+        }
       });
 
       // Create initial bubbles immediately (more bubbles, faster)
@@ -162,6 +170,7 @@ export default defineComponent({
       currentPage,
       selectedPresetId,
       mockData,
+      constraintsSolverOptions,
       bubbles,
     };
   },
@@ -239,7 +248,8 @@ html {
 .home-page,
 .creator-page,
 .viewer-page,
-.preset-selection-page {
+.preset-selection-page,
+.constraints-page {
   position: relative;
   z-index: 1;
   background: transparent;
