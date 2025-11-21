@@ -312,12 +312,13 @@
 </template>
 
 <script>
-import { defineComponent, ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
+import { defineComponent, ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
 import Sidebar from './Sidebar.vue';
 import schoolsoftIcon from '../assets/icons/unnamed.webp';
 import skola24Icon from '../assets/icons/skola.png';
+import { logStateRestore, logScheduleDisplay, logNavigation, logScheduleClear, logFilterChange, logComputedUpdate, logInfo, logWarning, logError } from '../utils/errorLogger';
 
 export default defineComponent({
   name: 'ViewerPage',
@@ -360,6 +361,7 @@ export default defineComponent({
     const termConfig = ref(null);
     const lessonTemplates = ref([]);
     const isLoadingScreenVisible = ref(false);
+    const isRestoringState = ref(false); // Flag to prevent watchers from clearing schedule during restoration
     const solverProgress = ref(0);
     const progressMessage = ref('Preparing schedule…');
     const progressPhases = [
@@ -665,6 +667,11 @@ export default defineComponent({
     });
 
     const goToHome = () => {
+      logNavigation('NAVIGATE_TO_HOME', {
+        fromPage: 'viewer',
+        toPage: 'creator',
+        presetId: props.presetId
+      });
       window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
     };
 
@@ -1336,33 +1343,104 @@ export default defineComponent({
           });
         });
       }
-      return ['All Classes', ...Array.from(unique).sort()];
+      const options = ['All Classes', ...Array.from(unique).sort()];
+      
+      logComputedUpdate('classFilterOptions', {
+        optionCount: options.length,
+        hasGeneratedSchedule: !!generatedSchedule.value,
+        uniqueClasses: Array.from(unique)
+      });
+      
+      return options;
     });
 
     const filteredSchedule = computed(() => {
       if (!generatedSchedule.value) {
+        logComputedUpdate('filteredSchedule', {
+          hasGeneratedSchedule: false,
+          reason: 'No generatedSchedule available'
+        });
         return null;
       }
+      
       if (selectedClassFilter.value === 'All Classes') {
+        logComputedUpdate('filteredSchedule', {
+          filter: 'All Classes',
+          returnsGenerated: true,
+          scheduleKeys: Object.keys(generatedSchedule.value)
+        });
         return generatedSchedule.value;
       }
+      
       const result = {};
+      let totalEntries = 0;
       Object.keys(generatedSchedule.value).forEach((dayKey) => {
         const entries = (generatedSchedule.value[dayKey] || []).filter(
           (entry) => (entry.classRef || '') === selectedClassFilter.value,
         );
         result[dayKey] = entries;
+        totalEntries += entries.length;
       });
+      
+      logComputedUpdate('filteredSchedule', {
+        filter: selectedClassFilter.value,
+        scheduleKeys: Object.keys(result),
+        totalEntries,
+        originalKeys: Object.keys(generatedSchedule.value)
+      });
+      
       return result;
     });
 
     watch(classFilterOptions, (options) => {
+      // Prevent reset during state restoration
+      if (isRestoringState.value) {
+        logFilterChange('WATCH_FILTER_OPTIONS_SKIP_RESTORING', {
+          currentFilter: selectedClassFilter.value,
+          availableOptions: options,
+          isRestoring: true
+        });
+        return;
+      }
+      
       if (!options.includes(selectedClassFilter.value)) {
+        logFilterChange('WATCH_FILTER_OPTIONS_RESET', {
+          oldFilter: selectedClassFilter.value,
+          newFilter: 'All Classes',
+          availableOptions: options,
+          reason: 'Current filter not in available options'
+        });
         selectedClassFilter.value = 'All Classes';
+      } else {
+        logFilterChange('WATCH_FILTER_OPTIONS_VALID', {
+          currentFilter: selectedClassFilter.value,
+          availableOptions: options
+        });
       }
     });
 
-    const displayedSchedule = computed(() => filteredSchedule.value || generatedSchedule.value);
+    const displayedSchedule = computed(() => {
+      const result = filteredSchedule.value || generatedSchedule.value;
+      
+      // Log computed updates in development
+      if (process.env.NODE_ENV === 'development') {
+        const scheduleKeys = result ? Object.keys(result) : [];
+        const scheduleEntryCount = scheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(result[key]) ? result[key].length : 0);
+        }, 0);
+        
+        logComputedUpdate('displayedSchedule', {
+          hasValue: !!result,
+          scheduleKeys,
+          scheduleEntryCount,
+          isFromFiltered: !!filteredSchedule.value,
+          isFromGenerated: !filteredSchedule.value && !!generatedSchedule.value,
+          selectedClassFilter: selectedClassFilter.value
+        });
+      }
+      
+      return result;
+    });
 
     const sortDayKeys = (keys) => {
       const weekdayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -1407,9 +1485,14 @@ export default defineComponent({
 
     const ensureSelectedDayForSchedule = (scheduleObject, { force = false } = {}) => {
       if (!scheduleObject || Object.keys(scheduleObject).length === 0) {
+        logScheduleDisplay('ENSURE_DAY_NO_SCHEDULE', {
+          reason: 'Schedule object is empty or null',
+          force
+        });
         selectedDayKey.value = null;
         return;
       }
+      
       const dayKeys = sortDayKeys(Object.keys(scheduleObject));
       const candidateDays = dayKeys.filter((day) => {
         if (isWeekendKey(day)) return false;
@@ -1418,13 +1501,29 @@ export default defineComponent({
       });
       const fallbackDay = candidateDays.length > 0 ? candidateDays[0] : dayKeys[0];
 
-      if (
-        force ||
+      const shouldUpdate = force ||
         !selectedDayKey.value ||
         !Object.prototype.hasOwnProperty.call(scheduleObject, selectedDayKey.value) ||
-        ((scheduleObject[selectedDayKey.value] || []).length === 0 && candidateDays.length > 0)
-      ) {
+        ((scheduleObject[selectedDayKey.value] || []).length === 0 && candidateDays.length > 0);
+
+      if (shouldUpdate) {
+        const oldDay = selectedDayKey.value;
         selectedDayKey.value = fallbackDay || null;
+        
+        logScheduleDisplay('ENSURE_DAY_UPDATED', {
+          oldDay,
+          newDay: selectedDayKey.value,
+          force,
+          dayKeys,
+          candidateDays,
+          scheduleKeys: Object.keys(scheduleObject)
+        });
+      } else {
+        logScheduleDisplay('ENSURE_DAY_NO_CHANGE', {
+          currentDay: selectedDayKey.value,
+          dayKeys,
+          candidateDays
+        });
       }
     };
 
@@ -1440,13 +1539,44 @@ export default defineComponent({
 
     watch(
       displayedSchedule,
-      (value) => {
+      (value, oldValue) => {
+        // Prevent clearing schedule during state restoration
+        if (isRestoringState.value) {
+          logScheduleDisplay('WATCH_DISPLAYED_SCHEDULE_SKIP_RESTORING', {
+            hasValue: !!value,
+            isRestoring: true
+          });
+          return;
+        }
+        
+        const scheduleKeys = value ? Object.keys(value) : [];
+        const scheduleEntryCount = scheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(value[key]) ? value[key].length : 0);
+        }, 0);
+        
+        logScheduleDisplay('WATCH_DISPLAYED_SCHEDULE', {
+          hasValue: !!value,
+          scheduleKeys,
+          scheduleEntryCount,
+          selectedDayKey: selectedDayKey.value,
+          selectedClassFilter: selectedClassFilter.value,
+          hadOldValue: !!oldValue
+        });
+        
         if (value) {
           schedule.value = value;
           ensureSelectedDayForSchedule(value);
         } else {
-          schedule.value = {};
-          selectedDayKey.value = null;
+          // Only clear if we're not restoring and the value is actually null/undefined
+          // Don't clear if it's an empty object (that might be valid)
+          if (value === null || value === undefined) {
+            logScheduleClear('WATCH_CLEAR_SCHEDULE', {
+              reason: 'displayedSchedule is null/undefined',
+              hadSchedule: !!oldValue
+            });
+            schedule.value = {};
+            selectedDayKey.value = null;
+          }
         }
       },
       { immediate: true }
@@ -1480,6 +1610,20 @@ export default defineComponent({
     watch(
       () => props.initialData,
       (value) => {
+        // Prevent interference with state restoration
+        if (isRestoringState.value) {
+          logInfo('WATCH_INITIAL_DATA_SKIP_RESTORING', {
+            hasInitialData: !!value,
+            isRestoring: true
+          });
+          return;
+        }
+        
+        logInfo('WATCH_INITIAL_DATA', {
+          hasInitialData: !!value,
+          presetId: props.presetId
+        });
+        
         applyInitialData(value);
         ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
       },
@@ -1556,38 +1700,58 @@ export default defineComponent({
 
     // Save current state
     const saveState = () => {
-      const state = {
-        presetId: props.presetId,
-        classes: [...classes.value],
-        teachers: [...teachers.value],
-        classrooms: [...classrooms.value],
-        subjects: [...subjects.value],
-        timeSlots: [...timeSlots.value],
-        termConfig: termConfig.value ? JSON.parse(JSON.stringify(termConfig.value)) : null,
-        lessonTemplates: [...lessonTemplates.value],
-        solverOptions: JSON.parse(JSON.stringify(solverOptions)),
-        customConstraints: customConstraints.value ? JSON.parse(JSON.stringify(customConstraints.value)) : null,
-        isCreatorMode: isCreatorMode.value,
-        generatedSchedule: generatedSchedule.value ? JSON.parse(JSON.stringify(generatedSchedule.value)) : null,
-        solverAssignments: [...solverAssignments.value],
-        selectedClassFilter: selectedClassFilter.value,
-        selectedDayKey: selectedDayKey.value,
-        schedule: schedule.value ? JSON.parse(JSON.stringify(schedule.value)) : null,
-        buildSuccess: buildSuccess.value
-      };
-      emit('save-state', state);
-      console.log('[ViewerPage] State saved', {
-        presetId: props.presetId,
-        hasClasses: classes.value.length > 0,
-        hasTeachers: teachers.value.length > 0,
-        hasTimeSlots: timeSlots.value.length > 0
-      });
+      try {
+        const scheduleKeys = generatedSchedule.value ? Object.keys(generatedSchedule.value) : [];
+        const scheduleEntryCount = scheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(generatedSchedule.value[key]) ? generatedSchedule.value[key].length : 0);
+        }, 0);
+        
+        const state = {
+          presetId: props.presetId,
+          classes: [...classes.value],
+          teachers: [...teachers.value],
+          classrooms: [...classrooms.value],
+          subjects: [...subjects.value],
+          timeSlots: [...timeSlots.value],
+          termConfig: termConfig.value ? JSON.parse(JSON.stringify(termConfig.value)) : null,
+          lessonTemplates: [...lessonTemplates.value],
+          solverOptions: JSON.parse(JSON.stringify(solverOptions)),
+          customConstraints: customConstraints.value ? JSON.parse(JSON.stringify(customConstraints.value)) : null,
+          isCreatorMode: isCreatorMode.value,
+          generatedSchedule: generatedSchedule.value ? JSON.parse(JSON.stringify(generatedSchedule.value)) : null,
+          solverAssignments: [...solverAssignments.value],
+          selectedClassFilter: selectedClassFilter.value,
+          selectedDayKey: selectedDayKey.value,
+          schedule: schedule.value ? JSON.parse(JSON.stringify(schedule.value)) : null,
+          buildSuccess: buildSuccess.value
+        };
+        
+        emit('save-state', state);
+        
+        logStateRestore('SAVE_STATE', {
+          presetId: props.presetId,
+          hasGeneratedSchedule: !!generatedSchedule.value,
+          hasSelectedClassFilter: !!selectedClassFilter.value,
+          selectedClassFilter: selectedClassFilter.value,
+          scheduleKeys,
+          scheduleEntryCount,
+          hasClasses: classes.value.length > 0,
+          hasTeachers: teachers.value.length > 0,
+          hasTimeSlots: timeSlots.value.length > 0,
+          isCreatorMode: isCreatorMode.value
+        });
+      } catch (error) {
+        logError('SAVE_STATE', error, {
+          presetId: props.presetId,
+          category: 'STATE_SAVE'
+        });
+      }
     };
     
     // Restore state from saved state
-    const restoreState = () => {
+    const restoreState = async () => {
       if (!props.savedState || props.savedState.presetId !== props.presetId) {
-        console.log('[ViewerPage] No saved state to restore', {
+        logStateRestore('RESTORE_STATE_SKIP', {
           hasSavedState: !!props.savedState,
           savedPresetId: props.savedState?.presetId,
           currentPresetId: props.presetId
@@ -1595,40 +1759,110 @@ export default defineComponent({
         return;
       }
       
-      const saved = props.savedState;
-      console.log('[ViewerPage] Restoring saved state', {
-        presetId: props.presetId,
-        hasClasses: saved.classes?.length > 0,
-        hasTeachers: saved.teachers?.length > 0,
-        hasTimeSlots: saved.timeSlots?.length > 0
-      });
+      // Set restoration flag to prevent watchers from clearing schedule
+      isRestoringState.value = true;
       
-      if (saved.classes) classes.value = [...saved.classes];
-      if (saved.teachers) teachers.value = [...saved.teachers];
-      if (saved.classrooms) classrooms.value = [...saved.classrooms];
-      if (saved.subjects) subjects.value = [...saved.subjects];
-      if (saved.timeSlots) timeSlots.value = [...saved.timeSlots];
-      if (saved.termConfig) termConfig.value = JSON.parse(JSON.stringify(saved.termConfig));
-      if (saved.lessonTemplates) lessonTemplates.value = [...saved.lessonTemplates];
-      if (saved.solverOptions) {
-        Object.assign(solverOptions, saved.solverOptions);
+      try {
+        const saved = props.savedState;
+        const savedScheduleKeys = saved.generatedSchedule ? Object.keys(saved.generatedSchedule) : [];
+        const savedScheduleEntryCount = savedScheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(saved.generatedSchedule[key]) ? saved.generatedSchedule[key].length : 0);
+        }, 0);
+        
+        logStateRestore('RESTORE_STATE_START', {
+          presetId: props.presetId,
+          hasClasses: saved.classes?.length > 0,
+          hasTeachers: saved.teachers?.length > 0,
+          hasTimeSlots: saved.timeSlots?.length > 0,
+          hasGeneratedSchedule: !!saved.generatedSchedule,
+          scheduleKeys: savedScheduleKeys,
+          scheduleEntryCount: savedScheduleEntryCount,
+          selectedClassFilter: saved.selectedClassFilter,
+          selectedDayKey: saved.selectedDayKey
+        });
+        
+        // Step 1: Restore basic data
+        if (saved.classes) classes.value = [...saved.classes];
+        if (saved.teachers) teachers.value = [...saved.teachers];
+        if (saved.classrooms) classrooms.value = [...saved.classrooms];
+        if (saved.subjects) subjects.value = [...saved.subjects];
+        if (saved.timeSlots) timeSlots.value = [...saved.timeSlots];
+        if (saved.termConfig) termConfig.value = JSON.parse(JSON.stringify(saved.termConfig));
+        if (saved.lessonTemplates) lessonTemplates.value = [...saved.lessonTemplates];
+        if (saved.solverOptions) {
+          Object.assign(solverOptions, saved.solverOptions);
+        }
+        if (saved.customConstraints) customConstraints.value = JSON.parse(JSON.stringify(saved.customConstraints));
+        if (saved.isCreatorMode !== undefined) isCreatorMode.value = saved.isCreatorMode;
+        if (saved.buildSuccess !== undefined) buildSuccess.value = saved.buildSuccess;
+        
+        // Step 2: Restore schedule data (critical order)
+        if (saved.generatedSchedule) {
+          generatedSchedule.value = JSON.parse(JSON.stringify(saved.generatedSchedule));
+          logStateRestore('RESTORE_GENERATED_SCHEDULE', {
+            scheduleKeys: Object.keys(generatedSchedule.value),
+            scheduleEntryCount: Object.keys(generatedSchedule.value).reduce((count, key) => {
+              return count + (Array.isArray(generatedSchedule.value[key]) ? generatedSchedule.value[key].length : 0);
+            }, 0)
+          });
+        }
+        
+        if (saved.solverAssignments) solverAssignments.value = [...saved.solverAssignments];
+        
+        // Step 3: Restore filter and day selection
+        if (saved.selectedClassFilter) {
+          selectedClassFilter.value = saved.selectedClassFilter;
+          logFilterChange('RESTORE_FILTER', {
+            newFilter: saved.selectedClassFilter
+          });
+        }
+        
+        if (saved.selectedDayKey) {
+          selectedDayKey.value = saved.selectedDayKey;
+        }
+        
+        if (saved.schedule) schedule.value = JSON.parse(JSON.stringify(saved.schedule));
+        
+        // Step 4: Wait for Vue reactivity to update computed properties
+        await nextTick();
+        
+        // Step 5: Ensure selected day is valid for the restored schedule
+        // Note: displayedSchedule is computed, so we don't assign to it
+        // It will update automatically when generatedSchedule changes
+        if (generatedSchedule.value) {
+          const currentDisplayed = displayedSchedule.value;
+          logScheduleDisplay('RESTORE_DISPLAYED_SCHEDULE', {
+            hasSchedule: !!currentDisplayed,
+            scheduleKeys: currentDisplayed ? Object.keys(currentDisplayed) : [],
+            selectedDayKey: selectedDayKey.value,
+            selectedClassFilter: selectedClassFilter.value
+          });
+          
+          ensureSelectedDayForSchedule(currentDisplayed || generatedSchedule.value, { force: true });
+        }
+        
+        logStateRestore('RESTORE_STATE_COMPLETE', {
+          presetId: props.presetId,
+          hasGeneratedSchedule: !!generatedSchedule.value,
+          hasDisplayedSchedule: !!displayedSchedule.value,
+          selectedClassFilter: selectedClassFilter.value,
+          selectedDayKey: selectedDayKey.value
+        });
+      } catch (error) {
+        logError('RESTORE_STATE', error, {
+          presetId: props.presetId,
+          category: 'STATE_RESTORE'
+        });
+      } finally {
+        // Clear restoration flag after a short delay to ensure all watchers have processed
+        await nextTick();
+        setTimeout(() => {
+          isRestoringState.value = false;
+          logStateRestore('RESTORE_STATE_FLAG_CLEARED', {
+            presetId: props.presetId
+          });
+        }, 100);
       }
-      if (saved.customConstraints) customConstraints.value = JSON.parse(JSON.stringify(saved.customConstraints));
-      if (saved.isCreatorMode !== undefined) isCreatorMode.value = saved.isCreatorMode;
-      if (saved.generatedSchedule) generatedSchedule.value = JSON.parse(JSON.stringify(saved.generatedSchedule));
-      if (saved.solverAssignments) solverAssignments.value = [...saved.solverAssignments];
-      if (saved.selectedClassFilter) selectedClassFilter.value = saved.selectedClassFilter;
-      if (saved.selectedDayKey) selectedDayKey.value = saved.selectedDayKey;
-      if (saved.schedule) schedule.value = JSON.parse(JSON.stringify(saved.schedule));
-      if (saved.buildSuccess !== undefined) buildSuccess.value = saved.buildSuccess;
-      
-      // Restore displayed schedule if available
-      if (generatedSchedule.value) {
-        displayedSchedule.value = generatedSchedule.value;
-        ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
-      }
-      
-      console.log('[ViewerPage] State restored successfully');
     };
 
     onMounted(() => {

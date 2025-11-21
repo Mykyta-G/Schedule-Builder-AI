@@ -14,7 +14,12 @@ const ERROR_CATEGORIES = {
   NAVIGATION_ERROR: 'NAVIGATION_ERROR',
   APPLICATION_ERROR: 'APPLICATION_ERROR',
   NETWORK_ERROR: 'NETWORK_ERROR',
-  UNKNOWN_ERROR: 'UNKNOWN_ERROR'
+  UNKNOWN_ERROR: 'UNKNOWN_ERROR',
+  STATE_SAVE: 'STATE_SAVE',
+  STATE_RESTORE: 'STATE_RESTORE',
+  SCHEDULE_DISPLAY: 'SCHEDULE_DISPLAY',
+  FILTER_CHANGE: 'FILTER_CHANGE',
+  COMPUTED_UPDATE: 'COMPUTED_UPDATE'
 };
 
 const LOG_LEVELS = {
@@ -165,6 +170,122 @@ export const logNavigationError = (error, fromPage, toPage, context = {}) => {
     toPage,
     ...context
   });
+};
+
+/**
+ * Log state restoration operations
+ */
+export const logStateRestore = (action, details = {}) => {
+  const logEntry = createLogEntry(LOG_LEVELS.INFO, ERROR_CATEGORIES.STATE_RESTORE, action, {
+    component: 'ViewerPage',
+    details: {
+      hasGeneratedSchedule: details.hasGeneratedSchedule || false,
+      hasSelectedClassFilter: details.hasSelectedClassFilter || false,
+      selectedClassFilter: details.selectedClassFilter || null,
+      scheduleKeys: details.scheduleKeys || [],
+      scheduleEntryCount: details.scheduleEntryCount || 0,
+      presetId: details.presetId || null,
+      ...details
+    }
+  });
+  
+  console.log(`[${ERROR_CATEGORIES.STATE_RESTORE}] ${action}`, logEntry);
+  return logEntry;
+};
+
+/**
+ * Log schedule display changes
+ */
+export const logScheduleDisplay = (action, details = {}) => {
+  const logEntry = createLogEntry(LOG_LEVELS.INFO, ERROR_CATEGORIES.SCHEDULE_DISPLAY, action, {
+    component: 'ViewerPage',
+    details: {
+      hasSchedule: details.hasSchedule || false,
+      scheduleKeys: details.scheduleKeys || [],
+      scheduleEntryCount: details.scheduleEntryCount || 0,
+      selectedDayKey: details.selectedDayKey || null,
+      selectedClassFilter: details.selectedClassFilter || null,
+      ...details
+    }
+  });
+  
+  console.log(`[${ERROR_CATEGORIES.SCHEDULE_DISPLAY}] ${action}`, logEntry);
+  return logEntry;
+};
+
+/**
+ * Log navigation events
+ */
+export const logNavigation = (action, details = {}) => {
+  const logEntry = createLogEntry(LOG_LEVELS.INFO, ERROR_CATEGORIES.NAVIGATION_ERROR, action, {
+    component: details.component || 'ViewerPage',
+    details: {
+      fromPage: details.fromPage || null,
+      toPage: details.toPage || null,
+      presetId: details.presetId || null,
+      hasState: details.hasState || false,
+      ...details
+    }
+  });
+  
+  console.log(`[${ERROR_CATEGORIES.NAVIGATION_ERROR}] ${action}`, logEntry);
+  return logEntry;
+};
+
+/**
+ * Log schedule clearing operations
+ */
+export const logScheduleClear = (action, details = {}) => {
+  const logEntry = createLogEntry(LOG_LEVELS.WARN, ERROR_CATEGORIES.SCHEDULE_DISPLAY, action, {
+    component: 'ViewerPage',
+    details: {
+      reason: details.reason || 'unknown',
+      hadSchedule: details.hadSchedule || false,
+      scheduleKeys: details.scheduleKeys || [],
+      ...details
+    }
+  });
+  
+  console.warn(`[${ERROR_CATEGORIES.SCHEDULE_DISPLAY}] ${action}`, logEntry);
+  return logEntry;
+};
+
+/**
+ * Log filter changes
+ */
+export const logFilterChange = (action, details = {}) => {
+  const logEntry = createLogEntry(LOG_LEVELS.INFO, ERROR_CATEGORIES.FILTER_CHANGE, action, {
+    component: 'ViewerPage',
+    details: {
+      oldFilter: details.oldFilter || null,
+      newFilter: details.newFilter || null,
+      availableOptions: details.availableOptions || [],
+      ...details
+    }
+  });
+  
+  console.log(`[${ERROR_CATEGORIES.FILTER_CHANGE}] ${action}`, logEntry);
+  return logEntry;
+};
+
+/**
+ * Log computed property updates
+ */
+export const logComputedUpdate = (computedName, details = {}) => {
+  const logEntry = createLogEntry(LOG_LEVELS.DEBUG, ERROR_CATEGORIES.COMPUTED_UPDATE, 'COMPUTED_UPDATE', {
+    component: 'ViewerPage',
+    computedName,
+    details: {
+      oldValue: details.oldValue,
+      newValue: details.newValue,
+      ...details
+    }
+  });
+  
+  if (process.env.NODE_ENV === 'development') {
+    console.debug(`[${ERROR_CATEGORIES.COMPUTED_UPDATE}] ${computedName}`, logEntry);
+  }
+  return logEntry;
 };
 
 /**
