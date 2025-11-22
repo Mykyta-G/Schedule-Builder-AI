@@ -335,15 +335,50 @@ export default defineComponent({
 
     const applyExternalSchedule = (incoming) => {
       if (!incoming || typeof incoming !== 'object') {
+        console.log('[SimpleSchedule] applyExternalSchedule: Invalid input', { incoming });
         return;
       }
 
+      // Check if schedule is actually empty (no entries in any day)
       const incomingKeys = Array.from(new Set(Object.keys(incoming)));
-    const combinedDays = Array.from(new Set([...(days.value || []), ...incomingKeys]));
-    combinedDays.sort(compareDayKeys);
+      const hasEntries = incomingKeys.some(key => {
+        const entries = Array.isArray(incoming[key]) ? incoming[key] : [];
+        return entries.length > 0;
+      });
 
-    const filteredDays = combinedDays.filter((day) => !isWeekendKey(day));
-    days.value = filteredDays.length > 0 ? filteredDays : combinedDays.filter((day) => !isWeekendKey(day));
+      // If schedule is empty (no entries), don't clear existing schedule
+      // This prevents clearing when ViewerPage passes {} as fallback
+      if (!hasEntries && incomingKeys.length === 0) {
+        console.log('[SimpleSchedule] applyExternalSchedule: Empty schedule object, preserving existing schedule', {
+          hasExistingSchedule: Object.keys(schedules).length > 0,
+          existingDays: Object.keys(schedules)
+        });
+        return;
+      }
+
+      // If we have an empty object with keys but no entries, also preserve existing
+      if (!hasEntries) {
+        console.log('[SimpleSchedule] applyExternalSchedule: Schedule has keys but no entries, preserving existing', {
+          incomingKeys,
+          hasExistingSchedule: Object.keys(schedules).length > 0
+        });
+        return;
+      }
+
+      console.log('[SimpleSchedule] applyExternalSchedule: Applying schedule', {
+        incomingKeys,
+        hasEntries,
+        entryCounts: incomingKeys.reduce((acc, key) => {
+          acc[key] = Array.isArray(incoming[key]) ? incoming[key].length : 0;
+          return acc;
+        }, {})
+      });
+
+      const combinedDays = Array.from(new Set([...(days.value || []), ...incomingKeys]));
+      combinedDays.sort(compareDayKeys);
+
+      const filteredDays = combinedDays.filter((day) => !isWeekendKey(day));
+      days.value = filteredDays.length > 0 ? filteredDays : combinedDays.filter((day) => !isWeekendKey(day));
       ensureDayBuckets(days.value);
 
       const fallbackBase = Date.now();
@@ -737,12 +772,31 @@ export default defineComponent({
 
     watch(
       () => props.externalSchedule,
-      (value) => {
-        if (value) {
+      (value, oldValue) => {
+        console.log('[SimpleSchedule] externalSchedule watch triggered', {
+          hasValue: !!value,
+          valueType: typeof value,
+          valueKeys: value ? Object.keys(value) : [],
+          isObject: value && typeof value === 'object',
+          isArray: Array.isArray(value),
+          hadOldValue: !!oldValue
+        });
+
+        // Only apply if we have a valid schedule object
+        // Empty object {} is truthy but we handle it in applyExternalSchedule
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
           applyExternalSchedule(value);
+        } else if (value === null || value === undefined) {
+          console.log('[SimpleSchedule] externalSchedule is null/undefined, not applying');
+        } else {
+          console.warn('[SimpleSchedule] externalSchedule has unexpected type', {
+            value,
+            type: typeof value,
+            isArray: Array.isArray(value)
+          });
         }
       },
-      { deep: true }
+      { deep: true, immediate: true }
     );
 
     watch([], () => {}, { immediate: true });

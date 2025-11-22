@@ -17,6 +17,7 @@
         >
           Viewer
         </button>
+        <a href="#" @click.prevent="goToConstraints" class="variabler-link">Variabler</a>
       </div>
     </div>
     <div class="viewer-layout">
@@ -166,40 +167,6 @@
                 </div>
               </div>
 
-              <!-- Time Slots Category -->
-              <div class="category-card">
-                <div class="category-header">
-                  <h4 class="category-title">Time Slots</h4>
-                  <button class="add-item-btn" @click="addTimeSlot">+ Add Time Slot</button>
-                </div>
-                <div class="items-list">
-                  <div v-for="(slot, index) in timeSlots" :key="index" class="item-row">
-                    <select
-                      v-model="slot.day"
-                      class="item-input day-select"
-                    >
-                      <option v-for="day in daysOfWeek" :key="day" :value="day">{{ day }}</option>
-                    </select>
-                    <input 
-                      v-model="slot.start" 
-                      type="text" 
-                      placeholder="Start time (e.g., 08:00)"
-                      class="item-input time-input"
-                    />
-                    <span class="time-separator">-</span>
-                    <input 
-                      v-model="slot.end" 
-                      type="text" 
-                      placeholder="End time (e.g., 09:00)"
-                      class="item-input time-input"
-                    />
-                    <button class="remove-btn" @click="removeTimeSlot(index)">×</button>
-                  </div>
-                  <div v-if="timeSlots.length === 0" class="empty-state">
-                    No time slots added yet
-                  </div>
-                </div>
-              </div>
 
               <!-- Subjects Category -->
               <div class="category-card">
@@ -311,12 +278,13 @@
 </template>
 
 <script>
-import { defineComponent, ref, reactive, computed, watch, onUnmounted } from 'vue';
+import { defineComponent, ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import SimpleSchedule from './SimpleSchedule.vue';
 import ChatWindow from './ChatWindow.vue';
 import Sidebar from './Sidebar.vue';
 import schoolsoftIcon from '../assets/icons/unnamed.webp';
 import skola24Icon from '../assets/icons/skola.png';
+import { logStateRestore, logScheduleDisplay, logNavigation, logScheduleClear, logFilterChange, logComputedUpdate, logInfo, logWarning, logError } from '../utils/errorLogger';
 
 export default defineComponent({
   name: 'ViewerPage',
@@ -330,8 +298,13 @@ export default defineComponent({
       type: Object,
       default: null,
     },
+    savedState: {
+      type: Object,
+      default: null,
+    },
   },
-  setup(props) {
+  emits: ['save-state'],
+  setup(props, { emit }) {
     const title = ref('');
     const description = ref('');
     const schedule = ref({});
@@ -340,7 +313,58 @@ export default defineComponent({
     const classes = ref([]);
     const teachers = ref([]);
     const classrooms = ref([]);
+    // Keep local ref but sync with global state via events (following constraints pattern)
     const timeSlots = ref([]);
+    
+    // Sync helper function
+    // Helper to normalize day names
+    const normalizeDayName = (day) => {
+      if (!day || typeof day !== 'string') return 'Monday';
+      const dayMap = {
+        'monday': 'Monday', 'mon': 'Monday', 'måndag': 'Monday',
+        'tuesday': 'Tuesday', 'tue': 'Tuesday', 'tisdag': 'Tuesday',
+        'wednesday': 'Wednesday', 'wed': 'Wednesday', 'onsdag': 'Wednesday',
+        'thursday': 'Thursday', 'thu': 'Thursday', 'torsdag': 'Thursday',
+        'friday': 'Friday', 'fri': 'Friday', 'fredag': 'Friday'
+      };
+      return dayMap[day.trim().toLowerCase()] || 'Monday';
+    };
+
+    // Helper to normalize time slots to fixed 5-day structure
+    const normalizeTimeSlots = (slots, defaultStart = '08:00', defaultEnd = '16:30') => {
+      if (!Array.isArray(slots) || slots.length === 0) {
+        return daysOfWeek.map(day => ({ day, start: defaultStart, end: defaultEnd }));
+      }
+      
+      const existingMap = new Map();
+      slots.forEach(slot => {
+        if (slot && slot.day) {
+          const normalizedDay = normalizeDayName(slot.day);
+          if (normalizedDay && slot.start && slot.end) {
+            existingMap.set(normalizedDay, { start: slot.start, end: slot.end });
+          }
+        }
+      });
+      
+      return daysOfWeek.map(day => {
+        if (existingMap.has(day)) {
+          return { day, ...existingMap.get(day) };
+        }
+        return { day, start: defaultStart, end: defaultEnd };
+      });
+    };
+
+    const syncTimeSlotsFromGlobal = (updatedSlots) => {
+      if (updatedSlots && Array.isArray(updatedSlots)) {
+        // Normalize to fixed 5-day structure
+        const normalized = normalizeTimeSlots(updatedSlots, '08:00', '16:30');
+        timeSlots.value = normalized;
+        logInfo('TIME_SLOTS_SYNCED_FROM_GLOBAL', { 
+          inputCount: updatedSlots.length,
+          outputCount: normalized.length 
+        });
+      }
+    };
     const subjects = ref([]);
     const generatedSchedule = ref(null);
     const solverAssignments = ref([]);
@@ -354,6 +378,7 @@ export default defineComponent({
     const termConfig = ref(null);
     const lessonTemplates = ref([]);
     const isLoadingScreenVisible = ref(false);
+    const isRestoringState = ref(false); // Flag to prevent watchers from clearing schedule during restoration
     const solverProgress = ref(0);
     const progressMessage = ref('Preparing schedule…');
     const progressPhases = [
@@ -551,16 +576,29 @@ export default defineComponent({
       classrooms.value = sanitizeEntities(data.classrooms);
       subjects.value = sanitizeEntities(data.subjects);
       timeSlots.value = sanitizeTimeSlots(data.timeSlots);
+      
+      // Sync to global state
+      if (timeSlots.value.length > 0) {
+        window.dispatchEvent(new CustomEvent('time-slots-updated', {
+          detail: { timeSlots: timeSlots.value, presetId: props.presetId }
+        }));
+      }
+      
       termConfig.value = sanitizeTerm(data.term);
       lessonTemplates.value = sanitizeLessonTemplatesData(data.lessonTemplates);
 
       if (timeSlots.value.length === 0 && termConfig.value) {
         const preferredDay =
           termConfig.value.days.find((day) => !isWeekendKey(day)) || termConfig.value.days[0] || daysOfWeek[0];
-        timeSlots.value = termConfig.value.dailySlots.map((slot) => ({
+        const generatedSlots = termConfig.value.dailySlots.map((slot) => ({
           day: preferredDay,
           start: slot.start,
           end: slot.end,
+        }));
+        timeSlots.value = generatedSlots;
+        // Sync generated slots to global state
+        window.dispatchEvent(new CustomEvent('time-slots-updated', {
+          detail: { timeSlots: timeSlots.value, presetId: props.presetId }
         }));
       }
 
@@ -574,12 +612,74 @@ export default defineComponent({
       const processedDays = new Set();
       const fallbackBase = Date.now();
 
+      // Get time slots for filtering
+      const timeSlotsMap = {};
+      if (timeSlots.value && timeSlots.value.length > 0) {
+        timeSlots.value.forEach(slot => {
+          if (slot && slot.day && slot.start && slot.end) {
+            const dayName = slot.day.trim();
+            const startMins = parseTimeToMinutes(slot.start);
+            const endMins = parseTimeToMinutes(slot.end);
+            if (startMins !== null && endMins !== null) {
+              timeSlotsMap[dayName] = { start: startMins, end: endMins };
+            }
+          }
+        });
+      }
+      
+      // Helper to convert ISO date to day name
+      const isoDateToDayName = (isoDate) => {
+        if (!isoDate || !isoDateRegex.test(isoDate)) return null;
+        try {
+          const date = new Date(`${isoDate}T00:00:00`);
+          const dayIndex = date.getDay();
+          const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          return dayNames[dayIndex];
+        } catch {
+          return null;
+        }
+      };
+
       Object.keys(scheduleByDay || {}).forEach((dayKey) => {
         if (isWeekendKey(dayKey)) {
           return;
         }
         const entries = Array.isArray(scheduleByDay[dayKey]) ? scheduleByDay[dayKey] : [];
-        normalized[dayKey] = entries.map((entry, index) => {
+        
+        // Filter entries based on time slots for this day
+        // Convert ISO date to day name if needed
+        const dayName = isoDateRegex.test(dayKey) ? isoDateToDayName(dayKey) : dayKey;
+        const dayTimeSlot = dayName ? timeSlotsMap[dayName] : null;
+        
+        const filteredEntries = entries.filter((entry) => {
+          // If we have time slots for this day, filter by them
+          if (dayTimeSlot) {
+            const entryStart = typeof entry?.startMinutes === 'number' ? entry.startMinutes : null;
+            if (entryStart === null) return false;
+            
+            // Check if entry starts within the time slot window
+            // Entry must start at or after slot start, and end before or at slot end
+            const entryEnd = entryStart + (typeof entry?.duration === 'number' ? entry.duration : 60);
+            const withinSlot = entryStart >= dayTimeSlot.start && entryEnd <= dayTimeSlot.end;
+            
+            if (!withinSlot) {
+              console.log('[ViewerPage] Filtering out entry outside time slot', {
+                day: dayName,
+                entryStart: `${Math.floor(entryStart/60)}:${String(entryStart%60).padStart(2,'0')}`,
+                entryEnd: `${Math.floor(entryEnd/60)}:${String(entryEnd%60).padStart(2,'0')}`,
+                slotStart: `${Math.floor(dayTimeSlot.start/60)}:${String(dayTimeSlot.start%60).padStart(2,'0')}`,
+                slotEnd: `${Math.floor(dayTimeSlot.end/60)}:${String(dayTimeSlot.end%60).padStart(2,'0')}`,
+                entry: entry
+              });
+            }
+            
+            return withinSlot;
+          }
+          // If no time slot for this day, allow all entries (backward compatibility)
+          return true;
+        });
+        
+        normalized[dayKey] = filteredEntries.map((entry, index) => {
           const name = entry?.name || '';
           const subject = entry?.subject || name.replace(/\s*\([^)]*\)\s*$/, '').trim();
           const classMatch = /\(([^)]+)\)/.exec(name);
@@ -597,8 +697,39 @@ export default defineComponent({
             colorIndex: entry?.colorIndex,
           };
         });
+        
+        // Log filtering results for this day
+        if (entries.length !== filteredEntries.length) {
+          console.log('[ViewerPage] Filtered schedule entries for day', {
+            dayKey,
+            dayName,
+            originalCount: entries.length,
+            filteredCount: filteredEntries.length,
+            removedCount: entries.length - filteredEntries.length,
+            timeSlot: dayTimeSlot ? {
+              start: `${Math.floor(dayTimeSlot.start/60)}:${String(dayTimeSlot.start%60).padStart(2,'0')}`,
+              end: `${Math.floor(dayTimeSlot.end/60)}:${String(dayTimeSlot.end%60).padStart(2,'0')}`
+            } : 'No time slot'
+          });
+        }
+        
         processedDays.add(dayKey);
       });
+      
+      // Log summary of filtering
+      const totalOriginal = Object.values(scheduleByDay || {}).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
+      const totalFiltered = Object.values(normalized).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
+      if (totalOriginal !== totalFiltered) {
+        console.log('[ViewerPage] Schedule filtering summary', {
+          totalOriginal,
+          totalFiltered,
+          removedCount: totalOriginal - totalFiltered,
+          timeSlotsMap: Object.keys(timeSlotsMap).map(day => ({
+            day,
+            slot: timeSlotsMap[day]
+          }))
+        });
+      }
 
       if (processedDays.size === 0) {
         daysOfWeek.forEach((day) => {
@@ -633,19 +764,144 @@ export default defineComponent({
         }))
         .filter((slot) => slot.start && slot.end);
     };
+    
+    // Helper to parse time string "HH:MM" to minutes
+    const parseTimeToMinutes = (timeString) => {
+      try {
+        const [hours, minutes] = timeString.split(':').map(Number);
+        if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+          return null;
+        }
+        return hours * 60 + minutes;
+      } catch (error) {
+        console.error('[ViewerPage] Error parsing time', { timeString, error });
+        return null;
+      }
+    };
+
+    // Validate time slots for solver - enforce exactly 5 weekdays
+    const validateTimeSlotsForSolver = (timeSlots) => {
+      const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+      
+      // Check 1: Exactly 5 entries
+      if (!Array.isArray(timeSlots) || timeSlots.length !== 5) {
+        return { 
+          valid: false, 
+          error: `Expected 5 time slots, got ${timeSlots?.length || 0}`,
+          details: { count: timeSlots?.length || 0, expected: 5 }
+        };
+      }
+      
+      // Check 2: All days are weekdays
+      const days = timeSlots.map(s => s?.day).filter(Boolean);
+      const invalidDays = days.filter(d => !weekdays.includes(d));
+      if (invalidDays.length > 0) {
+        return { 
+          valid: false, 
+          error: `Invalid days: ${invalidDays.join(', ')}. Must be Monday-Friday.`,
+          details: { invalidDays, weekdays }
+        };
+      }
+      
+      // Check 3: No duplicates
+      const uniqueDays = new Set(days);
+      if (uniqueDays.size !== 5) {
+        const duplicates = days.filter((d, i) => days.indexOf(d) !== i);
+        return { 
+          valid: false, 
+          error: `Duplicate days detected: ${[...new Set(duplicates)].join(', ')}`,
+          details: { duplicates: [...new Set(duplicates)], days }
+        };
+      }
+      
+      // Check 4: All have valid start/end times
+      for (const slot of timeSlots) {
+        if (!slot.start || !slot.end) {
+          return { 
+            valid: false, 
+            error: `Missing time for ${slot.day || 'unknown day'}`,
+            details: { day: slot.day, hasStart: !!slot.start, hasEnd: !!slot.end }
+          };
+        }
+        
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(slot.start) || !timeRegex.test(slot.end)) {
+          return { 
+            valid: false, 
+            error: `Invalid time format for ${slot.day}. Use HH:MM format (e.g., 08:00)`,
+            details: { day: slot.day, start: slot.start, end: slot.end }
+          };
+        }
+        
+        const startMins = parseTimeToMinutes(slot.start);
+        const endMins = parseTimeToMinutes(slot.end);
+        if (startMins === null || endMins === null || endMins <= startMins) {
+          return { 
+            valid: false, 
+            error: `Invalid time range for ${slot.day}: end time must be after start time`,
+            details: { day: slot.day, start: slot.start, end: slot.end, startMins, endMins }
+          };
+        }
+      }
+      
+      return { valid: true };
+    };
 
     const isBuildReady = computed(() => {
+      const hasTimeSlots = timeSlots.value.length > 0;
+      
       return (
         classes.value.length > 0 &&
         teachers.value.length > 0 &&
         classrooms.value.length > 0 &&
         subjects.value.length > 0 &&
-        timeSlots.value.length > 0
+        hasTimeSlots
       );
     });
 
     const goToHome = () => {
+      logNavigation('NAVIGATE_TO_HOME', {
+        fromPage: 'viewer',
+        toPage: 'creator',
+        presetId: props.presetId
+      });
       window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
+    };
+
+    const goToConstraints = () => {
+      try {
+        // Save state before navigating away
+        saveState();
+        
+        console.log('[ViewerPage] Navigating to constraints page', { 
+          presetId: props.presetId,
+          hasSolverOptions: !!solverOptions,
+          hasCustomConstraints: !!customConstraints.value,
+          localTimeSlotsCount: timeSlots.value.length
+        });
+        
+        // Request latest time slots from App.vue before navigating
+        // This ensures we pass the most recent time slots (which might have been updated in ConstraintsPage)
+        // We'll use a synchronous approach: dispatch request and wait briefly, or just let App.vue handle it
+        // Actually, App.vue already has globalTimeSlots, so we can just not pass timeSlots
+        // and let App.vue use its globalTimeSlots when rendering ConstraintsPage
+        // But to be safe, we'll pass our local time slots, and App.vue will keep globalTimeSlots if they exist
+        
+        // Pass current time slots to constraints page (App.vue will prioritize globalTimeSlots if they exist)
+        const slotsToPass = timeSlots.value.length > 0 ? timeSlots.value : [];
+        
+        window.dispatchEvent(new CustomEvent('navigate', { 
+          detail: { 
+            page: 'constraints',
+            presetId: props.presetId,
+            solverOptions: { ...solverOptions },
+            customConstraints: customConstraints.value,
+            timeSlots: slotsToPass
+          } 
+        }));
+      } catch (error) {
+        console.error('[ViewerPage] Error navigating to constraints', error, { presetId: props.presetId });
+      }
     };
 
     const toggleChat = () => {
@@ -674,6 +930,10 @@ export default defineComponent({
 
     const addTimeSlot = () => {
       timeSlots.value.push({ day: daysOfWeek[0], start: '', end: '' });
+      // Emit update event to sync with global state
+      window.dispatchEvent(new CustomEvent('time-slots-updated', {
+        detail: { timeSlots: timeSlots.value, presetId: props.presetId }
+      }));
     };
 
     const addSubject = () => {
@@ -694,6 +954,10 @@ export default defineComponent({
 
     const removeTimeSlot = (index) => {
       timeSlots.value.splice(index, 1);
+      // Emit update event to sync with global state
+      window.dispatchEvent(new CustomEvent('time-slots-updated', {
+        detail: { timeSlots: timeSlots.value, presetId: props.presetId }
+      }));
     };
 
     const removeSubject = (index) => {
@@ -837,27 +1101,164 @@ export default defineComponent({
       startSolverLoading();
       isBuilding.value = true;
 
+      // Ensure we have time slots before building
+      const slotsToUse = timeSlots.value.length > 0 ? timeSlots.value : [];
+      
+      if (slotsToUse.length === 0) {
+        solverError.value = 'Vänligen lägg till starttider i Variabler-sidan innan du bygger schemat.';
+        cancelSolverLoading();
+        return;
+      }
+
+      // Validate time slots before sending to solver
+      const validation = validateTimeSlotsForSolver(slotsToUse);
+      if (!validation.valid) {
+        console.error('[ViewerPage] Time slots validation failed before solver', validation);
+        solverError.value = `Ogiltiga starttider: ${validation.error}. Vänligen korrigera i Variabler-sidan.`;
+        cancelSolverLoading();
+        return;
+      }
+
       const payload = {
         classes: mapEntities(classes.value),
         teachers: mapEntities(teachers.value),
         classrooms: mapEntities(classrooms.value),
         subjects: mapEntities(subjects.value),
-        timeSlots: mapTimeSlots(timeSlots.value),
+        timeSlots: mapTimeSlots(slotsToUse),
       };
 
       if (termConfig.value) {
+        // Use timeSlots to create one big dailySlot (matching the previous system)
+        // The solver will apply this slot to all days, but we filter the display based on day-specific time slots
+        // This approach is more efficient and prevents the solver from getting stuck with too many slot combinations
+        let dailySlotsToUse = [];
+        
+        if (slotsToUse.length > 0) {
+          // Find the earliest start and latest end across all days
+          // This creates one big slot that spans all working hours
+          // The display will filter events based on day-specific time slots
+          let earliestStart = null;
+          let latestEnd = null;
+          
+          slotsToUse.forEach(slot => {
+            if (slot && slot.start && slot.end) {
+              const startMins = parseTimeToMinutes(slot.start);
+              const endMins = parseTimeToMinutes(slot.end);
+              
+              if (startMins !== null && endMins !== null) {
+                if (earliestStart === null || startMins < earliestStart) {
+                  earliestStart = startMins;
+                }
+                if (latestEnd === null || endMins > latestEnd) {
+                  latestEnd = endMins;
+                }
+              }
+            }
+          });
+          
+          // Create multiple slots from earliest start to latest end
+          // The solver needs multiple slots to schedule multiple lessons per day
+          // Find the maximum lesson duration to ensure slots are large enough
+          let maxLessonDuration = 60; // Default to 60 minutes
+          if (lessonTemplates.value && lessonTemplates.value.length > 0) {
+            const durations = lessonTemplates.value
+              .map(t => t.durationMinutes || 60)
+              .filter(d => d > 0);
+            if (durations.length > 0) {
+              maxLessonDuration = Math.max(...durations);
+            }
+          }
+          
+          // Use the maximum lesson duration, rounded up to nearest 5 minutes, with a minimum of 60
+          const slotDuration = Math.max(60, Math.ceil(maxLessonDuration / 5) * 5);
+          
+          if (earliestStart !== null && latestEnd !== null && latestEnd > earliestStart) {
+            const slots = [];
+            let currentStart = earliestStart;
+            
+            while (currentStart + slotDuration <= latestEnd) {
+              const slotStartHours = Math.floor(currentStart / 60);
+              const slotStartMins = currentStart % 60;
+              const slotEnd = currentStart + slotDuration;
+              const slotEndHours = Math.floor(slotEnd / 60);
+              const slotEndMins = slotEnd % 60;
+              
+              const slotStartTime = `${String(slotStartHours).padStart(2, '0')}:${String(slotStartMins).padStart(2, '0')}`;
+              const slotEndTime = `${String(slotEndHours).padStart(2, '0')}:${String(slotEndMins).padStart(2, '0')}`;
+              
+              slots.push({
+                start: slotStartTime,
+                end: slotEndTime
+              });
+              
+              currentStart += slotDuration;
+            }
+            
+            if (slots.length > 0) {
+              dailySlotsToUse = slots;
+              
+              console.log('[ViewerPage] Created multiple dailySlots from timeSlots', {
+                timeSlotsCount: slotsToUse.length,
+                dailySlotsCount: slots.length,
+                slotDurationMinutes: slotDuration,
+                maxLessonDurationMinutes: maxLessonDuration,
+                timeRange: `${Math.floor(earliestStart/60)}:${String(earliestStart%60).padStart(2,'0')} - ${Math.floor(latestEnd/60)}:${String(latestEnd%60).padStart(2,'0')}`,
+                slotsPerDay: slots.length,
+                note: `Slots sized to accommodate lessons up to ${maxLessonDuration} minutes`
+              });
+            } else {
+              console.error('[ViewerPage] Could not create dailySlots from timeSlots - time range too short', {
+                earliestStart,
+                latestEnd,
+                duration: latestEnd - earliestStart,
+                timeSlotsCount: slotsToUse.length
+              });
+            }
+          } else {
+            console.error('[ViewerPage] Could not create dailySlot from timeSlots', {
+              earliestStart,
+              latestEnd,
+              timeSlotsCount: slotsToUse.length,
+              isValid: earliestStart !== null && latestEnd !== null && latestEnd > earliestStart
+            });
+          }
+        }
+        
+        // Fall back to termConfig.dailySlots if we couldn't create from timeSlots
+        if (dailySlotsToUse.length === 0 && Array.isArray(termConfig.value.dailySlots) && termConfig.value.dailySlots.length > 0) {
+          dailySlotsToUse = termConfig.value.dailySlots.map((slot) => ({
+            start: slot.start,
+            end: slot.end,
+          }));
+          console.log('[ViewerPage] Using dailySlots from termConfig', {
+            dailySlotsCount: dailySlotsToUse.length
+          });
+        }
+        
+        // Ensure we have at least one dailySlot (solver requirement)
+        if (dailySlotsToUse.length === 0) {
+          console.error('[ViewerPage] No dailySlots available - cannot build schedule', {
+            hasTimeSlots: slotsToUse.length > 0,
+            hasTermConfigDailySlots: Array.isArray(termConfig.value.dailySlots) && termConfig.value.dailySlots.length > 0
+          });
+          solverError.value = 'Inga tidsluckor tillgängliga. Vänligen lägg till starttider i Variabler-sidan.';
+          cancelSolverLoading();
+          return;
+        }
+        
         payload.term = {
           name: termConfig.value.name,
           startDate: termConfig.value.startDate,
           weeks: termConfig.value.weeks,
           days: Array.isArray(termConfig.value.days) ? [...termConfig.value.days] : [],
-          dailySlots: Array.isArray(termConfig.value.dailySlots)
-            ? termConfig.value.dailySlots.map((slot) => ({
-                start: slot.start,
-                end: slot.end,
-              }))
-            : [],
+          dailySlots: dailySlotsToUse,
         };
+        
+        console.log('[ViewerPage] Term config prepared for solver', {
+          hasDailySlots: dailySlotsToUse.length > 0,
+          dailySlotsCount: dailySlotsToUse.length,
+          dailySlots: dailySlotsToUse
+        });
       }
 
       if (lessonTemplates.value.length > 0) {
@@ -879,7 +1280,89 @@ export default defineComponent({
         });
       }
 
-    if (solverOptions.relaxedConstraints || solverOptions.includeLunch) {
+    // Use custom constraints if available, otherwise compute from solverOptions
+    if (customConstraints.value && Object.keys(customConstraints.value).length > 0) {
+      console.log('[ViewerPage] Using custom constraints for buildWithSolver', { 
+        constraintsCount: Object.keys(customConstraints.value).length,
+        presetId: props.presetId,
+        constraints: JSON.stringify(customConstraints.value)
+      });
+      
+      // Merge custom constraints with defaults (custom overrides defaults)
+      const merged = {
+        ...CONSTRAINT_DEFAULTS,
+        ...customConstraints.value,
+        lunchBreak: {
+          ...CONSTRAINT_DEFAULTS.lunchBreak,
+          ...(customConstraints.value.lunchBreak || {})
+        }
+      };
+      
+      // When using time slots, remove classEarliestStartMinutes and classLatestStartMinutes
+      // because time slots already define when lessons can be scheduled
+      // These constraints conflict with time slots and cause the solver to ignore time slot restrictions
+      // IMPORTANT: The solver has defaults (08:00-10:00) if these are not provided, so we need to
+      // explicitly set them to null or very wide values to prevent the solver from applying defaults
+      if (slotsToUse.length > 0 || payload.term?.dailySlots?.length > 0) {
+        console.log('[ViewerPage] Removing class start time constraints - time slots define scheduling window', {
+          hasTimeSlots: slotsToUse.length > 0,
+          hasDailySlots: payload.term?.dailySlots?.length > 0,
+          removedConstraints: {
+            classEarliestStartMinutes: merged.classEarliestStartMinutes,
+            classLatestStartMinutes: merged.classLatestStartMinutes
+          }
+        });
+        
+        // Remove the conflicting constraints
+        // Set to null explicitly so the solver knows they're intentionally omitted
+        // The solver should respect time slots instead of using defaults
+        merged.classEarliestStartMinutes = null;
+        merged.classLatestStartMinutes = null;
+        
+        // Actually delete them so they're not sent at all
+        delete merged.classEarliestStartMinutes;
+        delete merged.classLatestStartMinutes;
+      } else {
+        // Only validate class start time constraints if we're NOT using time slots
+        // (for backward compatibility with basic mode)
+        if (merged.classEarliestStartMinutes !== undefined && merged.classLatestStartMinutes !== undefined) {
+          const earliest = merged.classEarliestStartMinutes;
+          const latest = merged.classLatestStartMinutes;
+          
+          if (latest <= earliest) {
+            console.error('[ViewerPage] Invalid constraint: latest <= earliest', {
+              earliest,
+              latest
+            });
+            solverError.value = `Ogiltiga begränsningar: Senaste starttid (${Math.floor(latest/60)}:${String(latest%60).padStart(2,'0')}) måste vara efter tidigaste starttid (${Math.floor(earliest/60)}:${String(earliest%60).padStart(2,'0')})`;
+            cancelSolverLoading();
+            return;
+          }
+        }
+      }
+      
+      console.log('[ViewerPage] Merged constraints for payload', {
+        mergedConstraintsCount: Object.keys(merged).length,
+        hasLunchBreak: !!merged.lunchBreak,
+        classEarliestStart: merged.classEarliestStartMinutes,
+        classLatestStart: merged.classLatestStartMinutes,
+        allConstraints: Object.keys(merged),
+        constraintsValues: merged
+      });
+      
+      payload.constraints = merged;
+      
+      // Log final payload to verify constraints are removed when using time slots
+      console.log('[ViewerPage] Final payload constraints check', {
+        hasConstraints: !!payload.constraints,
+        hasClassEarliestStart: 'classEarliestStartMinutes' in (payload.constraints || {}),
+        hasClassLatestStart: 'classLatestStartMinutes' in (payload.constraints || {}),
+        hasTimeSlots: !!payload.timeSlots && payload.timeSlots.length > 0,
+        hasDailySlots: !!payload.term?.dailySlots && payload.term.dailySlots.length > 0,
+        timeSlots: payload.timeSlots,
+        dailySlots: payload.term?.dailySlots
+      });
+    } else if (solverOptions.relaxedConstraints || solverOptions.includeLunch) {
       const constraints = {};
       if (solverOptions.relaxedConstraints) {
         constraints.maxClassSessionsPerDay = 6;
@@ -912,7 +1395,72 @@ export default defineComponent({
     }
 
       try {
+        // Log the full payload being sent to solver for debugging
+        console.log('[ViewerPage] Sending payload to Z3 solver', {
+          payloadSize: JSON.stringify(payload).length,
+          hasConstraints: !!payload.constraints,
+          constraints: payload.constraints ? JSON.stringify(payload.constraints) : null,
+          lessonTemplatesCount: payload.lessonTemplates?.length || 0,
+          timeSlotsCount: payload.timeSlots?.length || 0,
+          dailySlotsCount: payload.term?.dailySlots?.length || 0,
+          classEarliestStart: payload.constraints?.classEarliestStartMinutes,
+          classLatestStart: payload.constraints?.classLatestStartMinutes
+        });
+        
+        // Log detailed payload structure before sending
+        console.log('[ViewerPage] Detailed payload structure', {
+          hasTerm: !!payload.term,
+          termDailySlots: payload.term?.dailySlots,
+          termDays: payload.term?.days,
+          termWeeks: payload.term?.weeks,
+          termStartDate: payload.term?.startDate,
+          hasTimeSlots: !!payload.timeSlots,
+          timeSlotsCount: payload.timeSlots?.length,
+          hasLessonTemplates: !!payload.lessonTemplates,
+          lessonTemplatesCount: payload.lessonTemplates?.length
+        });
+        
         const response = await window.api.runScheduleSolver(JSON.parse(JSON.stringify(payload)));
+        
+        console.log('[ViewerPage] Received response from Z3 solver', {
+          success: response?.success,
+          hasSchedule: !!response?.scheduleByDay,
+          assignmentsCount: Array.isArray(response?.assignments) ? response.assignments.length : 0,
+          error: response?.error,
+          details: response?.details
+        });
+        
+        // Check if solver returned an error
+        if (response?.success === false) {
+          const errorMessage = response?.error || 'Z3 solver reported an error.';
+          console.error('[ViewerPage] Solver returned error', {
+            error: errorMessage,
+            details: response?.details,
+            payloadTerm: payload.term ? {
+              dailySlots: payload.term.dailySlots,
+              days: payload.term.days
+            } : null
+          });
+          
+          // Provide user-friendly error messages
+          let userMessage = errorMessage;
+          if (errorMessage.includes('Daily slot end time must be after start time')) {
+            userMessage = 'Ogiltig tidslucka: Sluttid måste vara efter starttid. Kontrollera starttider i Variabler-sidan.';
+          } else if (errorMessage.includes('Term requires at least one valid daily slot')) {
+            userMessage = 'Inga giltiga tidsluckor. Kontrollera att starttider är korrekt angivna i Variabler-sidan.';
+          } else if (errorMessage.includes('Term configuration did not produce any teaching time slots')) {
+            userMessage = 'Termkonfigurationen producerade inga tidsluckor. Kontrollera terminställningar och starttider.';
+          } else if (errorMessage.includes('No available time slots')) {
+            userMessage = 'Inga tillgängliga tidsluckor. Kontrollera starttider och begränsningar.';
+          } else if (errorMessage.includes('Z3 could not find a feasible schedule')) {
+            userMessage = 'Z3 kunde inte hitta ett möjligt schema. Försök att minska antalet lektioner eller slappa på begränsningarna.';
+          }
+          
+          solverError.value = userMessage;
+          cancelSolverLoading();
+          return;
+        }
+        
         generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
         solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
         buildSuccess.value = true;
@@ -923,7 +1471,298 @@ export default defineComponent({
         ensureSelectedDayForSchedule(generatedSchedule.value || {}, { force: true });
         finishSolverLoading();
       } catch (error) {
-        solverError.value = error?.message || 'Failed to build schedule with Z3 solver.';
+        // Extract the actual error message - it might be nested in multiple layers
+        let actualError = error?.message || 'Failed to build schedule with Z3 solver.';
+        
+        // Log the full error object to see what's available
+        console.error('[ViewerPage] Full error object', {
+          error,
+          errorKeys: error ? Object.keys(error) : [],
+          errorMessage: error?.message,
+          errorStack: error?.stack,
+          errorName: error?.name,
+          errorDetails: error?.details,
+          errorCause: error?.cause,
+          errorStderr: error?.stderr,
+          errorOriginalError: error?.originalError,
+          errorExitCode: error?.exitCode,
+          errorRawStdout: error?.rawStdout,
+          errorString: String(error),
+          // Try to get all enumerable properties
+          errorAllProps: error ? Object.getOwnPropertyNames(error) : []
+        });
+        
+        // Try multiple strategies to extract the actual error message
+        // Strategy 1: Check error.stderr (set by z3Solver.js) - this contains the actual Python error
+        // Note: IPC might not preserve custom properties, so also check the message
+        if (error?.stderr && error.stderr.trim()) {
+          actualError = error.stderr.trim();
+          // If stderr is very long, take the first meaningful line
+          const stderrLines = error.stderr.trim().split('\n');
+          if (stderrLines.length > 0) {
+            // Find the first non-empty line that looks like an error
+            const errorLine = stderrLines.find(line => 
+              line.trim().length > 0 && 
+              (line.includes('Error') || line.includes('error') || line.includes('Traceback') || line.includes('Exception'))
+            );
+            if (errorLine) {
+              actualError = errorLine.trim();
+            }
+          }
+        }
+        
+        // Strategy 1b: Extract stderr from error message if it was embedded (IPC fallback)
+        if ((actualError === error?.message || actualError.includes('Error invoking remote method')) && error?.message) {
+          // Try to extract stderr from [stderr: ...] pattern
+          const stderrMatch = error.message.match(/\[stderr: (.+?)\]/);
+          if (stderrMatch && stderrMatch[1]) {
+            actualError = stderrMatch[1].trim();
+          }
+          
+          // Try to extract originalError from [originalError: ...] pattern (from main.js)
+          const originalErrorMatch = error.message.match(/\[originalError: (.+?)\]/);
+          if (originalErrorMatch && originalErrorMatch[1] && originalErrorMatch[1] !== 'Z3 solver reported an error.') {
+            actualError = originalErrorMatch[1].trim();
+          }
+          
+          // Try to extract from [from stdout] pattern (from main.js)
+          const stdoutMatch = error.message.match(/(.+?)\s*\[from stdout\]/);
+          if (stdoutMatch && stdoutMatch[1] && stdoutMatch[1] !== 'Z3 solver reported an error.') {
+            actualError = stdoutMatch[1].trim();
+          }
+          
+          // Also try "Z3 solver error: ..." pattern (from z3Solver.js fallback)
+          const z3ErrorMatch = error.message.match(/Z3 solver error: (.+?)(?:\s*\[|$)/);
+          if (z3ErrorMatch && z3ErrorMatch[1]) {
+            actualError = z3ErrorMatch[1].trim();
+          }
+        }
+        
+        // Strategy 2: Check error.originalError (set by z3Solver.js) - this is the error from Python JSON response
+        if (error?.originalError && error.originalError !== 'Z3 solver reported an error.') {
+          actualError = error.originalError;
+        }
+        
+        // Strategy 2b: Extract originalError from error message if it was embedded (IPC fallback)
+        // The actual error is usually the first part before any [stderr: ...] or [details: ...]
+        if ((actualError === error?.message || actualError.includes('Error invoking remote method')) && error?.message) {
+          // Try to extract the main error message (before any brackets)
+          const mainErrorMatch = error.message.match(/^(.+?)(?:\s*\[|$)/);
+          if (mainErrorMatch && mainErrorMatch[1] && mainErrorMatch[1] !== 'Error invoking remote method \'run-solver\': Error: Z3 solver reported an error.') {
+            const extracted = mainErrorMatch[1].trim();
+            // Remove the IPC wrapper if present
+            if (extracted.includes('Error invoking remote method')) {
+              const afterInvoke = extracted.split('Error: ').pop();
+              if (afterInvoke && afterInvoke !== 'Z3 solver reported an error.') {
+                actualError = afterInvoke.trim();
+              }
+            } else if (extracted !== 'Z3 solver reported an error.') {
+              actualError = extracted;
+            }
+          }
+          
+          // Try to extract from [details: ...] pattern
+          const detailsMatch = error.message.match(/\[details: (.+?)\]/);
+          if (detailsMatch && detailsMatch[1]) {
+            actualError = detailsMatch[1].trim();
+          }
+        }
+        
+        // Strategy 2c: Check error.rawStdout if available (for debugging)
+        if (error?.rawStdout && actualError === 'Z3 solver reported an error.') {
+          try {
+            const parsed = JSON.parse(error.rawStdout);
+            if (parsed.error && parsed.error !== 'Z3 solver reported an error.') {
+              actualError = parsed.error;
+            }
+          } catch (e) {
+            // Not JSON, ignore
+          }
+        }
+        
+        // Strategy 3: Check error.details (set by z3Solver.js)
+        if (error?.details && actualError === error?.message) {
+          actualError = error.details;
+        }
+        
+        // Strategy 4: Check error.cause (for nested errors)
+        if (error?.cause) {
+          const causeError = error.cause?.message || error.cause;
+          if (causeError && causeError !== 'Z3 solver reported an error.') {
+            actualError = causeError;
+          }
+        }
+        
+        // Strategy 3: Parse IPC error messages - extract the actual Python error
+        if (error?.message?.includes('Error invoking remote method')) {
+          // Try multiple patterns to extract the actual error message
+          const patterns = [
+            // Pattern 1: Extract after 'run-solver': Error: (most common)
+            /'run-solver': Error: ([^\n]+?)(?:\n|$|File:)/,
+            // Pattern 2: Extract after second "Error: " (nested errors) - must be global for matchAll
+            /Error: ([^\n]+?)(?:\n|$|File:)/g,
+            // Pattern 3: Extract Z3-specific errors
+            /(Z3 [^\n]+?)(?:\n|$|File:)/,
+            // Pattern 4: Extract common Python error messages
+            /(could not [^\n]+?)(?:\n|$|File:)/i,
+          ];
+          
+          for (const pattern of patterns) {
+            // matchAll requires global regex, so use match for non-global patterns
+            if (pattern.global) {
+              const matches = error.message.matchAll(pattern);
+              for (const match of matches) {
+                if (match[1] && match[1].trim() && match[1].trim() !== 'Z3 solver reported an error.') {
+                  const extracted = match[1].trim();
+                  if (!extracted.includes('Error invoking remote method') && extracted.length > 10) {
+                    actualError = extracted;
+                    break;
+                  }
+                }
+              }
+            } else {
+              const match = error.message.match(pattern);
+              if (match && match[1] && match[1].trim() && match[1].trim() !== 'Z3 solver reported an error.') {
+                const extracted = match[1].trim();
+                if (!extracted.includes('Error invoking remote method') && extracted.length > 10) {
+                  actualError = extracted;
+                }
+              }
+            }
+            if (actualError !== error?.message && !actualError.includes('Error invoking remote method')) {
+              break;
+            }
+          }
+          
+          // Fallback: Try splitting by "Error: " and taking the last meaningful part
+          if (actualError === error?.message || actualError.includes('Error invoking remote method')) {
+            const errorParts = error.message.split('Error: ');
+            if (errorParts.length >= 2) {
+              // Get the last part and clean it up
+              let extracted = errorParts[errorParts.length - 1].trim();
+              // Remove file paths, line numbers, and stack traces
+              extracted = extracted
+                .split('\n')[0]  // First line only
+                .split('File:')[0]  // Remove file paths
+                .split('at ')[0]  // Remove stack trace markers
+                .split('Traceback')[0]  // Remove traceback markers
+                .trim();
+              
+              if (extracted && 
+                  extracted !== 'Z3 solver reported an error.' && 
+                  !extracted.includes('Error invoking remote method') &&
+                  extracted.length > 10) {
+                actualError = extracted;
+              }
+            }
+          }
+        }
+        
+        // Strategy 4: Check if error.message contains more specific information
+        if (error?.message && error.message !== 'Z3 solver reported an error.') {
+          // If the message is more specific than the generic one, use it
+          if (!error.message.includes('Error invoking remote method') || 
+              error.message.length > 50) {
+            actualError = error.message;
+          }
+        }
+        
+        // Log detailed extraction info
+        const extractedFrom = {
+          stderr: !!error?.stderr,
+          originalError: !!error?.originalError,
+          details: !!error?.details,
+          message: !!error?.message,
+          messageContainsStderr: error?.message?.includes('[stderr:'),
+          messageContainsDetails: error?.message?.includes('[details:'),
+          messageContainsOriginalError: error?.message?.includes('[originalError:'),
+          messageContainsFromStdout: error?.message?.includes('[from stdout]'),
+          messageLength: error?.message?.length || 0,
+          fullMessage: error?.message, // Log the full message to see what we're working with
+          // Try to extract embedded info from message
+          extractedStderr: error?.message?.match(/\[stderr: (.+?)\]/)?.[1],
+          extractedOriginalError: error?.message?.match(/\[originalError: (.+?)\]/)?.[1],
+          extractedDetails: error?.message?.match(/\[details: (.+?)\]/)?.[1],
+          extractedFromStdout: error?.message?.match(/(.+?)\s*\[from stdout\]/)?.[1]
+        };
+        
+        // If we found embedded error info, use it
+        if (extractedFrom.extractedFromStdout && extractedFrom.extractedFromStdout !== 'Z3 solver reported an error.') {
+          actualError = extractedFrom.extractedFromStdout;
+        } else if (extractedFrom.extractedOriginalError && extractedFrom.extractedOriginalError !== 'Z3 solver reported an error.') {
+          actualError = extractedFrom.extractedOriginalError;
+        } else if (extractedFrom.extractedStderr && extractedFrom.extractedStderr !== 'Z3 solver reported an error.') {
+          actualError = extractedFrom.extractedStderr;
+        } else if (extractedFrom.extractedDetails && extractedFrom.extractedDetails !== 'Z3 solver reported an error.') {
+          actualError = extractedFrom.extractedDetails;
+        }
+        
+        console.error('[ViewerPage] Z3 solver error', {
+          errorMessage: error?.message,
+          actualError,
+          extractedFrom,
+          // Show the full error message prominently
+          FULL_ERROR_MESSAGE: error?.message,
+          errorStack: error?.stack,
+          errorName: error?.name,
+          errorDetails: error?.details,
+          errorCause: error?.cause,
+          errorStderr: error?.stderr,
+          errorOriginalError: error?.originalError,
+          payloadTerm: payload.term ? {
+            hasDailySlots: !!payload.term.dailySlots,
+            dailySlotsCount: payload.term.dailySlots?.length || 0,
+            dailySlots: payload.term.dailySlots,
+            hasDays: !!payload.term.days,
+            daysCount: payload.term.days?.length || 0
+          } : null,
+          payloadConstraints: payload.constraints ? JSON.stringify(payload.constraints) : null,
+          constraintWindow: payload.constraints ? {
+            earliest: payload.constraints.classEarliestStartMinutes,
+            latest: payload.constraints.classLatestStartMinutes,
+            note: slotsToUse.length > 0 ? 'Class start time constraints removed - using time slots instead' : 'Using class start time constraints'
+          } : null,
+          hasTimeSlots: !!payload.timeSlots,
+          timeSlotsCount: payload.timeSlots?.length || 0
+        });
+        
+        // Provide user-friendly error messages based on the actual error
+        let userMessage = actualError;
+        if (actualError.includes('Daily slot end time must be after start time')) {
+          userMessage = 'Ogiltig tidslucka: Sluttid måste vara efter starttid. Kontrollera starttider i Variabler-sidan.';
+        } else if (actualError.includes('Term requires at least one valid daily slot')) {
+          userMessage = 'Inga giltiga tidsluckor. Kontrollera att starttider är korrekt angivna i Variabler-sidan.';
+        } else if (actualError.includes('Term configuration did not produce any teaching time slots')) {
+          userMessage = 'Termkonfigurationen producerade inga tidsluckor. Kontrollera terminställningar och starttider.';
+        } else if (actualError.includes('No available time slots')) {
+          userMessage = 'Inga tillgängliga tidsluckor. Kontrollera starttider och begränsningar.';
+        } else if (actualError.includes('Z3 could not find a feasible schedule') || 
+                   actualError.includes('Z3 could not satisfy the provided lesson templates')) {
+          // This means the constraints are too restrictive or there aren't enough time slots
+          const suggestions = [
+            'Minska antalet lektioner per vecka',
+            'Öka tidsluckorna (starttid-sluttid)',
+            'Slappa på begränsningarna (max inaktiv tid, max lektioner per dag)',
+            'Kontrollera att alla lektioner har tillräckligt med tid att schemaläggas'
+          ];
+          userMessage = `Z3 kunde inte hitta ett möjligt schema med de nuvarande begränsningarna. Försök: ${suggestions.join(', ')}.`;
+        } else if (actualError.includes('classLatestStartMinutes must be greater than or equal to')) {
+          userMessage = 'Ogiltiga begränsningar: Senaste starttid måste vara efter tidigaste starttid. Kontrollera klassbegränsningar.';
+        } else if (actualError.includes('Z3 solver reported an error') || actualError === 'Z3 solver reported an error.') {
+          // Generic error - log more details and provide helpful context
+          console.warn('[ViewerPage] Generic solver error - unable to extract specific error message', {
+            fullError: error,
+            payloadSummary: {
+              hasTerm: !!payload.term,
+              hasConstraints: !!payload.constraints,
+              hasLessonTemplates: !!payload.lessonTemplates,
+              lessonTemplatesCount: payload.lessonTemplates?.length || 0
+            }
+          });
+          userMessage = 'Z3-solverfel: Kunde inte skapa schema. Kontrollera att starttider, begränsningar och lektionsmallar är korrekt konfigurerade. Se konsolen för mer information.';
+        }
+        
+        solverError.value = userMessage;
         cancelSolverLoading();
       } finally {
         isBuilding.value = false;
@@ -1102,6 +1941,30 @@ export default defineComponent({
     lunchGranularity: 30,
   });
 
+  // Custom constraints from ConstraintsPage
+  const customConstraints = ref(null);
+
+  // Constraint defaults (matching Python solver)
+  const CONSTRAINT_DEFAULTS = {
+    maxClassIdleMinutes: 120,
+    maxTeacherIdleMinutes: 180,
+    maxClassSessionsPerDay: 5,
+    maxTeacherSessionsPerDay: 3,
+    disableSubjectSpread: false,
+    disableTransitionBuffers: false,
+    physicalEducationBufferMinutes: 15,
+    physicalEducationSubjects: ['Idrott och hälsa 1', 'Idrott', 'Gymnastik'],
+    classEarliestStartMinutes: 480,
+    classLatestStartMinutes: 600,
+    lunchBreak: {
+      enabled: true,
+      windowStart: '10:30',
+      windowEnd: '12:30',
+      durationMinutes: 30,
+      granularityMinutes: 5
+    }
+  };
+
     const loadMinimalMockData = () => {
       solverError.value = null;
       buildSuccess.value = false;
@@ -1161,33 +2024,104 @@ export default defineComponent({
           });
         });
       }
-      return ['All Classes', ...Array.from(unique).sort()];
+      const options = ['All Classes', ...Array.from(unique).sort()];
+      
+      logComputedUpdate('classFilterOptions', {
+        optionCount: options.length,
+        hasGeneratedSchedule: !!generatedSchedule.value,
+        uniqueClasses: Array.from(unique)
+      });
+      
+      return options;
     });
 
     const filteredSchedule = computed(() => {
       if (!generatedSchedule.value) {
+        logComputedUpdate('filteredSchedule', {
+          hasGeneratedSchedule: false,
+          reason: 'No generatedSchedule available'
+        });
         return null;
       }
+      
       if (selectedClassFilter.value === 'All Classes') {
+        logComputedUpdate('filteredSchedule', {
+          filter: 'All Classes',
+          returnsGenerated: true,
+          scheduleKeys: Object.keys(generatedSchedule.value)
+        });
         return generatedSchedule.value;
       }
+      
       const result = {};
+      let totalEntries = 0;
       Object.keys(generatedSchedule.value).forEach((dayKey) => {
         const entries = (generatedSchedule.value[dayKey] || []).filter(
           (entry) => (entry.classRef || '') === selectedClassFilter.value,
         );
         result[dayKey] = entries;
+        totalEntries += entries.length;
       });
+      
+      logComputedUpdate('filteredSchedule', {
+        filter: selectedClassFilter.value,
+        scheduleKeys: Object.keys(result),
+        totalEntries,
+        originalKeys: Object.keys(generatedSchedule.value)
+      });
+      
       return result;
     });
 
     watch(classFilterOptions, (options) => {
+      // Prevent reset during state restoration
+      if (isRestoringState.value) {
+        logFilterChange('WATCH_FILTER_OPTIONS_SKIP_RESTORING', {
+          currentFilter: selectedClassFilter.value,
+          availableOptions: options,
+          isRestoring: true
+        });
+        return;
+      }
+      
       if (!options.includes(selectedClassFilter.value)) {
+        logFilterChange('WATCH_FILTER_OPTIONS_RESET', {
+          oldFilter: selectedClassFilter.value,
+          newFilter: 'All Classes',
+          availableOptions: options,
+          reason: 'Current filter not in available options'
+        });
         selectedClassFilter.value = 'All Classes';
+      } else {
+        logFilterChange('WATCH_FILTER_OPTIONS_VALID', {
+          currentFilter: selectedClassFilter.value,
+          availableOptions: options
+        });
       }
     });
 
-    const displayedSchedule = computed(() => filteredSchedule.value || generatedSchedule.value);
+    const displayedSchedule = computed(() => {
+      const result = filteredSchedule.value || generatedSchedule.value;
+      
+      // Log computed updates in development
+      if (process.env.NODE_ENV === 'development') {
+        const scheduleKeys = result ? Object.keys(result) : [];
+        const scheduleEntryCount = scheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(result[key]) ? result[key].length : 0);
+        }, 0);
+        
+        logComputedUpdate('displayedSchedule', {
+          hasValue: !!result,
+          scheduleKeys,
+          scheduleEntryCount,
+          isFromFiltered: !!filteredSchedule.value,
+          isFromGenerated: !filteredSchedule.value && !!generatedSchedule.value,
+          selectedClassFilter: selectedClassFilter.value
+        });
+      }
+      
+      return result;
+    });
 
     const sortDayKeys = (keys) => {
       const weekdayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -1232,9 +2166,14 @@ export default defineComponent({
 
     const ensureSelectedDayForSchedule = (scheduleObject, { force = false } = {}) => {
       if (!scheduleObject || Object.keys(scheduleObject).length === 0) {
+        logScheduleDisplay('ENSURE_DAY_NO_SCHEDULE', {
+          reason: 'Schedule object is empty or null',
+          force
+        });
         selectedDayKey.value = null;
         return;
       }
+      
       const dayKeys = sortDayKeys(Object.keys(scheduleObject));
       const candidateDays = dayKeys.filter((day) => {
         if (isWeekendKey(day)) return false;
@@ -1243,13 +2182,29 @@ export default defineComponent({
       });
       const fallbackDay = candidateDays.length > 0 ? candidateDays[0] : dayKeys[0];
 
-      if (
-        force ||
+      const shouldUpdate = force ||
         !selectedDayKey.value ||
         !Object.prototype.hasOwnProperty.call(scheduleObject, selectedDayKey.value) ||
-        ((scheduleObject[selectedDayKey.value] || []).length === 0 && candidateDays.length > 0)
-      ) {
+        ((scheduleObject[selectedDayKey.value] || []).length === 0 && candidateDays.length > 0);
+
+      if (shouldUpdate) {
+        const oldDay = selectedDayKey.value;
         selectedDayKey.value = fallbackDay || null;
+        
+        logScheduleDisplay('ENSURE_DAY_UPDATED', {
+          oldDay,
+          newDay: selectedDayKey.value,
+          force,
+          dayKeys,
+          candidateDays,
+          scheduleKeys: Object.keys(scheduleObject)
+        });
+      } else {
+        logScheduleDisplay('ENSURE_DAY_NO_CHANGE', {
+          currentDay: selectedDayKey.value,
+          dayKeys,
+          candidateDays
+        });
       }
     };
 
@@ -1265,13 +2220,44 @@ export default defineComponent({
 
     watch(
       displayedSchedule,
-      (value) => {
+      (value, oldValue) => {
+        // Prevent clearing schedule during state restoration
+        if (isRestoringState.value) {
+          logScheduleDisplay('WATCH_DISPLAYED_SCHEDULE_SKIP_RESTORING', {
+            hasValue: !!value,
+            isRestoring: true
+          });
+          return;
+        }
+        
+        const scheduleKeys = value ? Object.keys(value) : [];
+        const scheduleEntryCount = scheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(value[key]) ? value[key].length : 0);
+        }, 0);
+        
+        logScheduleDisplay('WATCH_DISPLAYED_SCHEDULE', {
+          hasValue: !!value,
+          scheduleKeys,
+          scheduleEntryCount,
+          selectedDayKey: selectedDayKey.value,
+          selectedClassFilter: selectedClassFilter.value,
+          hadOldValue: !!oldValue
+        });
+        
         if (value) {
           schedule.value = value;
           ensureSelectedDayForSchedule(value);
         } else {
-          schedule.value = {};
-          selectedDayKey.value = null;
+          // Only clear if we're not restoring and the value is actually null/undefined
+          // Don't clear if it's an empty object (that might be valid)
+          if (value === null || value === undefined) {
+            logScheduleClear('WATCH_CLEAR_SCHEDULE', {
+              reason: 'displayedSchedule is null/undefined',
+              hadSchedule: !!oldValue
+            });
+            schedule.value = {};
+            selectedDayKey.value = null;
+          }
         }
       },
       { immediate: true }
@@ -1305,20 +2291,363 @@ export default defineComponent({
     watch(
       () => props.initialData,
       (value) => {
+        // Prevent interference with state restoration
+        if (isRestoringState.value) {
+          logInfo('WATCH_INITIAL_DATA_SKIP_RESTORING', {
+            hasInitialData: !!value,
+            isRestoring: true
+          });
+          return;
+        }
+        
+        logInfo('WATCH_INITIAL_DATA', {
+          hasInitialData: !!value,
+          presetId: props.presetId
+        });
+        
         applyInitialData(value);
         ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
       },
       { immediate: true, deep: true }
     );
 
+    // Listen for time slots updates from ConstraintsPage
+    const handleTimeSlotsUpdate = (event) => {
+      try {
+        const { timeSlots: updatedSlots, presetId: eventPresetId } = event.detail;
+        
+        // Validate presetId matches (prevent cross-preset contamination)
+        if (eventPresetId && props.presetId && eventPresetId !== props.presetId) {
+          console.log('[ViewerPage] Ignoring time-slots-updated-viewer event - presetId mismatch', {
+            eventPresetId,
+            currentPresetId: props.presetId
+          });
+          return;
+        }
+        
+        if (updatedSlots && Array.isArray(updatedSlots)) {
+          syncTimeSlotsFromGlobal(updatedSlots);
+          logInfo('TIME_SLOTS_UPDATED', { count: updatedSlots.length });
+        }
+      } catch (error) {
+        console.error('[ViewerPage] Error handling time-slots-updated-viewer event', error);
+      }
+    };
+
+    // Listen for constraints updates from ConstraintsPage
+    const handleConstraintsUpdate = (event) => {
+      try {
+        const { constraints, presetId: eventPresetId } = event.detail;
+        
+        console.log('[ViewerPage] Received constraints-updated event', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          eventPresetId,
+          currentPresetId: props.presetId,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Verify presetId matches (if provided)
+        if (eventPresetId && eventPresetId !== props.presetId) {
+          console.warn('[ViewerPage] Constraints update preset mismatch', {
+            eventPresetId,
+            currentPresetId: props.presetId
+          });
+          return;
+        }
+        
+        // Store custom constraints
+        customConstraints.value = constraints;
+        
+        console.log('[ViewerPage] Constraints stored successfully', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          presetId: props.presetId,
+          constraints: JSON.stringify(constraints)
+        });
+      } catch (error) {
+        console.error('[ViewerPage] Error handling constraints update', error, {
+          presetId: props.presetId,
+          errorMessage: error?.message,
+          errorStack: error?.stack
+        });
+      }
+    };
+    
+    // Also listen for the App.vue forwarded event
+    const handleConstraintsUpdateFromApp = (event) => {
+      try {
+        const { constraints, presetId: eventPresetId } = event.detail;
+        
+        console.log('[ViewerPage] Received constraints-updated-viewer event from App', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          eventPresetId,
+          currentPresetId: props.presetId
+        });
+        
+        if (eventPresetId && eventPresetId !== props.presetId) {
+          console.warn('[ViewerPage] Constraints update preset mismatch (from App)', {
+            eventPresetId,
+            currentPresetId: props.presetId
+          });
+          return;
+        }
+        
+        customConstraints.value = constraints;
+        
+        console.log('[ViewerPage] Constraints stored from App event', {
+          constraintsCount: Object.keys(constraints || {}).length,
+          presetId: props.presetId
+        });
+      } catch (error) {
+        console.error('[ViewerPage] Error handling constraints update from App', error);
+      }
+    };
+
+    // Save current state
+    const saveState = () => {
+      try {
+        const scheduleKeys = generatedSchedule.value ? Object.keys(generatedSchedule.value) : [];
+        const scheduleEntryCount = scheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(generatedSchedule.value[key]) ? generatedSchedule.value[key].length : 0);
+        }, 0);
+        
+        const state = {
+          presetId: props.presetId,
+          classes: [...classes.value],
+          teachers: [...teachers.value],
+          classrooms: [...classrooms.value],
+          subjects: [...subjects.value],
+          timeSlots: [...timeSlots.value],
+          termConfig: termConfig.value ? JSON.parse(JSON.stringify(termConfig.value)) : null,
+          lessonTemplates: [...lessonTemplates.value],
+          solverOptions: JSON.parse(JSON.stringify(solverOptions)),
+          customConstraints: customConstraints.value ? JSON.parse(JSON.stringify(customConstraints.value)) : null,
+          isCreatorMode: isCreatorMode.value,
+          generatedSchedule: generatedSchedule.value ? JSON.parse(JSON.stringify(generatedSchedule.value)) : null,
+          solverAssignments: [...solverAssignments.value],
+          selectedClassFilter: selectedClassFilter.value,
+          selectedDayKey: selectedDayKey.value,
+          schedule: schedule.value ? JSON.parse(JSON.stringify(schedule.value)) : null,
+          buildSuccess: buildSuccess.value
+        };
+        
+        emit('save-state', state);
+        
+        logStateRestore('SAVE_STATE', {
+          presetId: props.presetId,
+          hasGeneratedSchedule: !!generatedSchedule.value,
+          hasSelectedClassFilter: !!selectedClassFilter.value,
+          selectedClassFilter: selectedClassFilter.value,
+          scheduleKeys,
+          scheduleEntryCount,
+          hasClasses: classes.value.length > 0,
+          hasTeachers: teachers.value.length > 0,
+          hasTimeSlots: timeSlots.value.length > 0,
+          isCreatorMode: isCreatorMode.value
+        });
+      } catch (error) {
+        logError('SAVE_STATE', error, {
+          presetId: props.presetId,
+          category: 'STATE_SAVE'
+        });
+      }
+    };
+    
+    // Restore state from saved state
+    const restoreState = async () => {
+      if (!props.savedState || props.savedState.presetId !== props.presetId) {
+        logStateRestore('RESTORE_STATE_SKIP', {
+          hasSavedState: !!props.savedState,
+          savedPresetId: props.savedState?.presetId,
+          currentPresetId: props.presetId
+        });
+        return;
+      }
+      
+      // Set restoration flag to prevent watchers from clearing schedule
+      isRestoringState.value = true;
+      
+      try {
+        const saved = props.savedState;
+        const savedScheduleKeys = saved.generatedSchedule ? Object.keys(saved.generatedSchedule) : [];
+        const savedScheduleEntryCount = savedScheduleKeys.reduce((count, key) => {
+          return count + (Array.isArray(saved.generatedSchedule[key]) ? saved.generatedSchedule[key].length : 0);
+        }, 0);
+        
+        logStateRestore('RESTORE_STATE_START', {
+          presetId: props.presetId,
+          hasClasses: saved.classes?.length > 0,
+          hasTeachers: saved.teachers?.length > 0,
+          hasTimeSlots: saved.timeSlots?.length > 0,
+          hasGeneratedSchedule: !!saved.generatedSchedule,
+          scheduleKeys: savedScheduleKeys,
+          scheduleEntryCount: savedScheduleEntryCount,
+          selectedClassFilter: saved.selectedClassFilter,
+          selectedDayKey: saved.selectedDayKey
+        });
+        
+        // Step 1: Restore basic data
+        if (saved.classes) classes.value = [...saved.classes];
+        if (saved.teachers) teachers.value = [...saved.teachers];
+        if (saved.classrooms) classrooms.value = [...saved.classrooms];
+        if (saved.subjects) subjects.value = [...saved.subjects];
+        // Restore time slots with backward compatibility
+        // But first, request time slots from App.vue (they might be more recent from ConstraintsPage)
+        // We'll restore from saved state only if we don't have any time slots yet
+        // The request-time-slots event will be handled by App.vue and will dispatch time-slots-updated-viewer
+        // which will update timeSlots.value via handleTimeSlotsUpdate
+        // So we only restore from saved state if we still don't have time slots after the request
+        if (saved.timeSlots && timeSlots.value.length === 0) {
+          // Use a small delay to allow App.vue to respond to request-time-slots first
+          setTimeout(() => {
+            // Only restore from saved state if we still don't have time slots
+            // (App.vue might have sent newer ones via time-slots-updated-viewer)
+            if (timeSlots.value.length === 0) {
+              timeSlots.value = [...saved.timeSlots];
+              logStateRestore('RESTORE_TIME_SLOTS_FROM_SAVED', {
+                timeSlotsCount: timeSlots.value.length,
+                presetId: saved.presetId
+              });
+            } else {
+              logStateRestore('SKIP_RESTORE_TIME_SLOTS_HAVE_GLOBAL', {
+                savedCount: saved.timeSlots.length,
+                currentCount: timeSlots.value.length,
+                presetId: saved.presetId
+              });
+            }
+          }, 50);
+        }
+        if (saved.termConfig) termConfig.value = JSON.parse(JSON.stringify(saved.termConfig));
+        if (saved.lessonTemplates) lessonTemplates.value = [...saved.lessonTemplates];
+        if (saved.solverOptions) {
+          Object.assign(solverOptions, saved.solverOptions);
+        }
+        if (saved.customConstraints) customConstraints.value = JSON.parse(JSON.stringify(saved.customConstraints));
+        if (saved.isCreatorMode !== undefined) isCreatorMode.value = saved.isCreatorMode;
+        if (saved.buildSuccess !== undefined) buildSuccess.value = saved.buildSuccess;
+        
+        // Step 2: Restore schedule data (critical order)
+        if (saved.generatedSchedule) {
+          generatedSchedule.value = JSON.parse(JSON.stringify(saved.generatedSchedule));
+          logStateRestore('RESTORE_GENERATED_SCHEDULE', {
+            scheduleKeys: Object.keys(generatedSchedule.value),
+            scheduleEntryCount: Object.keys(generatedSchedule.value).reduce((count, key) => {
+              return count + (Array.isArray(generatedSchedule.value[key]) ? generatedSchedule.value[key].length : 0);
+            }, 0)
+          });
+        }
+        
+        if (saved.solverAssignments) solverAssignments.value = [...saved.solverAssignments];
+        
+        // Step 3: Restore filter and day selection
+        if (saved.selectedClassFilter) {
+          selectedClassFilter.value = saved.selectedClassFilter;
+          logFilterChange('RESTORE_FILTER', {
+            newFilter: saved.selectedClassFilter
+          });
+        }
+        
+        if (saved.selectedDayKey) {
+          selectedDayKey.value = saved.selectedDayKey;
+        }
+        
+        if (saved.schedule) schedule.value = JSON.parse(JSON.stringify(saved.schedule));
+        
+        // Step 4: Wait for Vue reactivity to update computed properties
+        await nextTick();
+        
+        // Step 5: Ensure selected day is valid for the restored schedule
+        // Note: displayedSchedule is computed, so we don't assign to it
+        // It will update automatically when generatedSchedule changes
+        if (generatedSchedule.value) {
+          const currentDisplayed = displayedSchedule.value;
+          logScheduleDisplay('RESTORE_DISPLAYED_SCHEDULE', {
+            hasSchedule: !!currentDisplayed,
+            scheduleKeys: currentDisplayed ? Object.keys(currentDisplayed) : [],
+            selectedDayKey: selectedDayKey.value,
+            selectedClassFilter: selectedClassFilter.value
+          });
+          
+          ensureSelectedDayForSchedule(currentDisplayed || generatedSchedule.value, { force: true });
+        }
+        
+        logStateRestore('RESTORE_STATE_COMPLETE', {
+          presetId: props.presetId,
+          hasGeneratedSchedule: !!generatedSchedule.value,
+          hasDisplayedSchedule: !!displayedSchedule.value,
+          selectedClassFilter: selectedClassFilter.value,
+          selectedDayKey: selectedDayKey.value
+        });
+      } catch (error) {
+        logError('RESTORE_STATE', error, {
+          presetId: props.presetId,
+          category: 'STATE_RESTORE'
+        });
+      } finally {
+        // Clear restoration flag after a short delay to ensure all watchers have processed
+        await nextTick();
+        setTimeout(() => {
+          isRestoringState.value = false;
+          logStateRestore('RESTORE_STATE_FLAG_CLEARED', {
+            presetId: props.presetId
+          });
+        }, 100);
+      }
+    };
+
+    onMounted(() => {
+      window.addEventListener('constraints-updated', handleConstraintsUpdate);
+      window.addEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
+      window.addEventListener('time-slots-updated-viewer', handleTimeSlotsUpdate);
+      
+      // Request stored time slots from App.vue first (they might be more recent from ConstraintsPage)
+      // This should happen before restoreState so that restoreState can check if we have global time slots
+      console.log('[ViewerPage] Requesting stored time slots from App', {
+        presetId: props.presetId,
+        hasLocalTimeSlots: timeSlots.value.length > 0
+      });
+      
+      // Dispatch event to request time slots from App.vue
+      window.dispatchEvent(new CustomEvent('request-time-slots', {
+        detail: { presetId: props.presetId }
+      }));
+      
+      // Restore saved state if available (after requesting time slots)
+      // restoreState will check if we have time slots and only restore from saved state if we don't
+      restoreState();
+      
+      // Request stored constraints from App.vue if we don't have any
+      if (!customConstraints.value) {
+        console.log('[ViewerPage] Requesting stored constraints from App', {
+          presetId: props.presetId
+        });
+        
+        // Dispatch event to request constraints from App.vue
+        window.dispatchEvent(new CustomEvent('request-constraints', {
+          detail: { presetId: props.presetId }
+        }));
+      } else {
+        console.log('[ViewerPage] Already has custom constraints', {
+          constraintsCount: Object.keys(customConstraints.value || {}).length,
+          presetId: props.presetId
+        });
+      }
+    });
+
     onUnmounted(() => {
+      // Save state before unmounting
+      saveState();
+      
       clearProgressTimers();
+      window.removeEventListener('constraints-updated', handleConstraintsUpdate);
+      window.removeEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
+      window.removeEventListener('time-slots-updated-viewer', handleTimeSlotsUpdate);
     });
 
     return {
       title,
       description,
       goToHome,
+      goToConstraints,
       createSchedule,
       onScheduleChange,
       isChatOpen,
@@ -1410,6 +2739,29 @@ export default defineComponent({
   background: #f0f0f0;
   border-radius: 0.6vh;
   padding: 0.3vh;
+  align-items: center;
+}
+
+.variabler-link {
+  padding: 0.8vh 1.5vh;
+  border: none;
+  border-radius: 0.4vh;
+  background: transparent;
+  color: #718096;
+  font-size: 1.4vh;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.variabler-link:hover {
+  background: #fff;
+  color: #667eea;
+  box-shadow: 0 0.1vh 0.3vh rgba(0, 0, 0, 0.1);
 }
 
 .mode-btn {
