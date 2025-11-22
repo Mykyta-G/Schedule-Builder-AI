@@ -167,40 +167,6 @@
                 </div>
               </div>
 
-              <!-- Time Slots Category -->
-              <div class="category-card">
-                <div class="category-header">
-                  <h4 class="category-title">Time Slots</h4>
-                  <button class="add-item-btn" @click="addTimeSlot">+ Add Time Slot</button>
-                </div>
-                <div class="items-list">
-                  <div v-for="(slot, index) in timeSlots" :key="index" class="item-row">
-                    <select
-                      v-model="slot.day"
-                      class="item-input day-select"
-                    >
-                      <option v-for="day in daysOfWeek" :key="day" :value="day">{{ day }}</option>
-                    </select>
-                    <input 
-                      v-model="slot.start" 
-                      type="text" 
-                      placeholder="Start time (e.g., 08:00)"
-                      class="item-input time-input"
-                    />
-                    <span class="time-separator">-</span>
-                    <input 
-                      v-model="slot.end" 
-                      type="text" 
-                      placeholder="End time (e.g., 09:00)"
-                      class="item-input time-input"
-                    />
-                    <button class="remove-btn" @click="removeTimeSlot(index)">×</button>
-                  </div>
-                  <div v-if="timeSlots.length === 0" class="empty-state">
-                    No time slots added yet
-                  </div>
-                </div>
-              </div>
 
               <!-- Subjects Category -->
               <div class="category-card">
@@ -347,7 +313,16 @@ export default defineComponent({
     const classes = ref([]);
     const teachers = ref([]);
     const classrooms = ref([]);
+    // Keep local ref but sync with global state via events (following constraints pattern)
     const timeSlots = ref([]);
+    
+    // Sync helper function
+    const syncTimeSlotsFromGlobal = (updatedSlots) => {
+      if (updatedSlots && Array.isArray(updatedSlots)) {
+        timeSlots.value = [...updatedSlots];
+        logInfo('TIME_SLOTS_SYNCED_FROM_GLOBAL', { count: updatedSlots.length });
+      }
+    };
     const subjects = ref([]);
     const generatedSchedule = ref(null);
     const solverAssignments = ref([]);
@@ -559,16 +534,29 @@ export default defineComponent({
       classrooms.value = sanitizeEntities(data.classrooms);
       subjects.value = sanitizeEntities(data.subjects);
       timeSlots.value = sanitizeTimeSlots(data.timeSlots);
+      
+      // Sync to global state
+      if (timeSlots.value.length > 0) {
+        window.dispatchEvent(new CustomEvent('time-slots-updated', {
+          detail: { timeSlots: timeSlots.value, presetId: props.presetId }
+        }));
+      }
+      
       termConfig.value = sanitizeTerm(data.term);
       lessonTemplates.value = sanitizeLessonTemplatesData(data.lessonTemplates);
 
       if (timeSlots.value.length === 0 && termConfig.value) {
         const preferredDay =
           termConfig.value.days.find((day) => !isWeekendKey(day)) || termConfig.value.days[0] || daysOfWeek[0];
-        timeSlots.value = termConfig.value.dailySlots.map((slot) => ({
+        const generatedSlots = termConfig.value.dailySlots.map((slot) => ({
           day: preferredDay,
           start: slot.start,
           end: slot.end,
+        }));
+        timeSlots.value = generatedSlots;
+        // Sync generated slots to global state
+        window.dispatchEvent(new CustomEvent('time-slots-updated', {
+          detail: { timeSlots: timeSlots.value, presetId: props.presetId }
         }));
       }
 
@@ -657,12 +645,14 @@ export default defineComponent({
     };
 
     const isBuildReady = computed(() => {
+      const hasTimeSlots = timeSlots.value.length > 0;
+      
       return (
         classes.value.length > 0 &&
         teachers.value.length > 0 &&
         classrooms.value.length > 0 &&
         subjects.value.length > 0 &&
-        timeSlots.value.length > 0
+        hasTimeSlots
       );
     });
 
@@ -686,12 +676,16 @@ export default defineComponent({
           hasCustomConstraints: !!customConstraints.value
         });
         
+        // Pass current time slots to constraints page
+        const slotsToPass = timeSlots.value.length > 0 ? timeSlots.value : [];
+        
         window.dispatchEvent(new CustomEvent('navigate', { 
           detail: { 
             page: 'constraints',
             presetId: props.presetId,
             solverOptions: { ...solverOptions },
-            customConstraints: customConstraints.value
+            customConstraints: customConstraints.value,
+            timeSlots: slotsToPass
           } 
         }));
       } catch (error) {
@@ -725,6 +719,10 @@ export default defineComponent({
 
     const addTimeSlot = () => {
       timeSlots.value.push({ day: daysOfWeek[0], start: '', end: '' });
+      // Emit update event to sync with global state
+      window.dispatchEvent(new CustomEvent('time-slots-updated', {
+        detail: { timeSlots: timeSlots.value, presetId: props.presetId }
+      }));
     };
 
     const addSubject = () => {
@@ -745,6 +743,10 @@ export default defineComponent({
 
     const removeTimeSlot = (index) => {
       timeSlots.value.splice(index, 1);
+      // Emit update event to sync with global state
+      window.dispatchEvent(new CustomEvent('time-slots-updated', {
+        detail: { timeSlots: timeSlots.value, presetId: props.presetId }
+      }));
     };
 
     const removeSubject = (index) => {
@@ -888,12 +890,21 @@ export default defineComponent({
       startSolverLoading();
       isBuilding.value = true;
 
+      // Ensure we have time slots before building
+      const slotsToUse = timeSlots.value.length > 0 ? timeSlots.value : [];
+      
+      if (slotsToUse.length === 0) {
+        solverError.value = 'Vänligen lägg till starttider i Variabler-sidan innan du bygger schemat.';
+        cancelSolverLoading();
+        return;
+      }
+
       const payload = {
         classes: mapEntities(classes.value),
         teachers: mapEntities(teachers.value),
         classrooms: mapEntities(classrooms.value),
         subjects: mapEntities(subjects.value),
-        timeSlots: mapTimeSlots(timeSlots.value),
+        timeSlots: mapTimeSlots(slotsToUse),
       };
 
       if (termConfig.value) {
@@ -1630,6 +1641,29 @@ export default defineComponent({
       { immediate: true, deep: true }
     );
 
+    // Listen for time slots updates from ConstraintsPage
+    const handleTimeSlotsUpdate = (event) => {
+      try {
+        const { timeSlots: updatedSlots, presetId: eventPresetId } = event.detail;
+        
+        // Validate presetId matches (prevent cross-preset contamination)
+        if (eventPresetId && props.presetId && eventPresetId !== props.presetId) {
+          console.log('[ViewerPage] Ignoring time-slots-updated-viewer event - presetId mismatch', {
+            eventPresetId,
+            currentPresetId: props.presetId
+          });
+          return;
+        }
+        
+        if (updatedSlots && Array.isArray(updatedSlots)) {
+          syncTimeSlotsFromGlobal(updatedSlots);
+          logInfo('TIME_SLOTS_UPDATED', { count: updatedSlots.length });
+        }
+      } catch (error) {
+        console.error('[ViewerPage] Error handling time-slots-updated-viewer event', error);
+      }
+    };
+
     // Listen for constraints updates from ConstraintsPage
     const handleConstraintsUpdate = (event) => {
       try {
@@ -1786,7 +1820,14 @@ export default defineComponent({
         if (saved.teachers) teachers.value = [...saved.teachers];
         if (saved.classrooms) classrooms.value = [...saved.classrooms];
         if (saved.subjects) subjects.value = [...saved.subjects];
-        if (saved.timeSlots) timeSlots.value = [...saved.timeSlots];
+        // Restore time slots with backward compatibility
+        if (saved.timeSlots) {
+          timeSlots.value = [...saved.timeSlots];
+          // Also sync to global state for migration
+          window.dispatchEvent(new CustomEvent('time-slots-updated', {
+            detail: { timeSlots: timeSlots.value, presetId: saved.presetId }
+          }));
+        }
         if (saved.termConfig) termConfig.value = JSON.parse(JSON.stringify(saved.termConfig));
         if (saved.lessonTemplates) lessonTemplates.value = [...saved.lessonTemplates];
         if (saved.solverOptions) {
@@ -1868,6 +1909,19 @@ export default defineComponent({
     onMounted(() => {
       window.addEventListener('constraints-updated', handleConstraintsUpdate);
       window.addEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
+      window.addEventListener('time-slots-updated-viewer', handleTimeSlotsUpdate);
+      
+      // Request stored time slots from App.vue if we don't have any
+      if (timeSlots.value.length === 0) {
+        console.log('[ViewerPage] Requesting stored time slots from App', {
+          presetId: props.presetId
+        });
+        
+        // Dispatch event to request time slots from App.vue
+        window.dispatchEvent(new CustomEvent('request-time-slots', {
+          detail: { presetId: props.presetId }
+        }));
+      }
       
       // Restore saved state if available
       restoreState();
@@ -1897,6 +1951,7 @@ export default defineComponent({
       clearProgressTimers();
       window.removeEventListener('constraints-updated', handleConstraintsUpdate);
       window.removeEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
+      window.removeEventListener('time-slots-updated-viewer', handleTimeSlotsUpdate);
     });
 
     return {

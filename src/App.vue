@@ -12,7 +12,7 @@
     <HomePage v-if="currentPage === 'home'" />
     <CreatorPage v-else-if="currentPage === 'creator'" />
     <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" :saved-state="viewerPageState" @save-state="handleViewerPageStateSave" />
-    <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" :custom-constraints="constraintsCustomConstraints" />
+    <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" :custom-constraints="constraintsCustomConstraints" :time-slots="globalTimeSlots" />
   </div>
 </template>
 
@@ -42,6 +42,10 @@ export default defineComponent({
     // This is needed because ViewerPage is unmounted when on ConstraintsPage
     const globalCustomConstraints = ref(null);
     const globalConstraintsPresetId = ref(null);
+    
+    // Store time slots globally so both ViewerPage and ConstraintsPage can access
+    const globalTimeSlots = ref([]);
+    const globalTimeSlotsPresetId = ref(null);
     
     // Store ViewerPage state globally so it persists when navigating to/from ConstraintsPage
     const viewerPageState = ref(null);
@@ -158,6 +162,12 @@ export default defineComponent({
           constraintsCustomConstraints.value = null;
         }
         
+        // Capture timeSlots for constraints page
+        if (event.detail.timeSlots) {
+          globalTimeSlots.value = event.detail.timeSlots;
+          globalTimeSlotsPresetId.value = event.detail.presetId || null;
+        }
+        
         // Preserve ViewerPage state when navigating to/from constraints
         if (previousPage === 'viewer' && event.detail.page === 'constraints') {
           // State will be saved by ViewerPage before unmounting
@@ -245,6 +255,73 @@ export default defineComponent({
           console.error('[App] Error handling request-constraints', error);
         }
       });
+      
+      // Listen for time-slots-updated event (always active since App.vue is always mounted)
+      window.addEventListener('time-slots-updated', (event) => {
+        try {
+          const { timeSlots, presetId } = event.detail;
+          console.log('[App] Received time-slots-updated event', {
+            timeSlotsCount: (timeSlots || []).length,
+            presetId,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Store globally so ViewerPage can access when it remounts
+          globalTimeSlots.value = timeSlots || [];
+          globalTimeSlotsPresetId.value = presetId;
+          
+          // Dispatch to ViewerPage if it's mounted (it will also listen directly)
+          // This ensures ViewerPage gets the update even if it's currently mounted
+          window.dispatchEvent(new CustomEvent('time-slots-updated-viewer', {
+            detail: { timeSlots: timeSlots || [], presetId }
+          }));
+          
+          console.log('[App] Time slots stored and forwarded', {
+            stored: globalTimeSlots.value.length > 0,
+            forwarded: true
+          });
+        } catch (error) {
+          console.error('[App] Error handling time-slots-updated event', error, {
+            errorMessage: error?.message,
+            errorStack: error?.stack
+          });
+        }
+      });
+      
+      // Listen for requests from ViewerPage to get stored time slots
+      window.addEventListener('request-time-slots', (event) => {
+        try {
+          const { presetId } = event.detail;
+          console.log('[App] Received request-time-slots', {
+            requestedPresetId: presetId,
+            storedPresetId: globalTimeSlotsPresetId.value,
+            hasStoredTimeSlots: (globalTimeSlots.value || []).length > 0
+          });
+          
+          // If presetId matches and we have stored time slots, send them
+          if (globalTimeSlots.value && globalTimeSlots.value.length > 0 && 
+              (!presetId || presetId === globalTimeSlotsPresetId.value)) {
+            console.log('[App] Sending stored time slots to ViewerPage', {
+              timeSlotsCount: globalTimeSlots.value.length,
+              presetId: globalTimeSlotsPresetId.value
+            });
+            
+            window.dispatchEvent(new CustomEvent('time-slots-updated-viewer', {
+              detail: { 
+                timeSlots: globalTimeSlots.value, 
+                presetId: globalTimeSlotsPresetId.value 
+              }
+            }));
+          } else {
+            console.log('[App] No matching stored time slots to send', {
+              hasStored: (globalTimeSlots.value || []).length > 0,
+              presetIdMatch: presetId === globalTimeSlotsPresetId.value
+            });
+          }
+        } catch (error) {
+          console.error('[App] Error handling request-time-slots', error);
+        }
+      });
 
       // Create initial bubbles immediately (more bubbles, faster)
       for (let i = 0; i < 8; i++) {
@@ -297,6 +374,8 @@ export default defineComponent({
       constraintsCustomConstraints,
       globalCustomConstraints,
       globalConstraintsPresetId,
+      globalTimeSlots,
+      globalTimeSlotsPresetId,
       viewerPageState,
       handleViewerPageStateSave,
       bubbles,

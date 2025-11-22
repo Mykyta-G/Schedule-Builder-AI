@@ -432,6 +432,31 @@
           </div>
         </div>
       </div>
+
+      <!-- Starttid -->
+      <div class="constraint-category">
+        <h3 class="category-title">Starttid</h3>
+        <div class="constraint-items">
+          <div class="time-slots-header">
+            <button class="add-time-slot-btn" @click="addTimeSlot">+ Lägg till starttid</button>
+          </div>
+          <div v-for="(slot, index) in timeSlots" :key="index" class="time-slot-row">
+            <select v-model="slot.day" class="time-slot-day">
+              <option v-for="day in daysOfWeek" :key="day" :value="day">{{ day }}</option>
+            </select>
+            <input v-model="slot.start" type="text" placeholder="08:00" class="time-slot-input" />
+            <span class="time-separator">-</span>
+            <input v-model="slot.end" type="text" placeholder="09:00" class="time-slot-input" />
+            <button class="remove-time-slot-btn" @click="removeTimeSlot(index)">×</button>
+          </div>
+          <div v-if="timeSlots.length === 0" class="empty-time-slots">
+            Inga starttider tillagda ännu
+          </div>
+          <div v-if="!timeSlotsValidation.valid" class="validation-error">
+            {{ timeSlotsValidation.error }}
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -453,6 +478,10 @@ export default defineComponent({
     customConstraints: {
       type: Object,
       default: () => null
+    },
+    timeSlots: {
+      type: Array,
+      default: () => []
     }
   },
   setup(props) {
@@ -523,6 +552,11 @@ export default defineComponent({
         granularityMinutes: { valid: true, error: null, warning: null }
       }
     });
+
+    // Time slots management
+    const timeSlots = ref([]);
+    const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    const timeSlotsValidation = ref({ valid: true, error: null });
 
     // Edit mode state - always enabled for direct editing
     const isEditMode = ref(true);
@@ -1312,12 +1346,18 @@ export default defineComponent({
         });
         
         const validationResult = validateAllConstraints();
-        if (!validationResult.valid) {
+        const timeSlotsValid = validateTimeSlots();
+        
+        if (!validationResult.valid || !timeSlotsValid) {
+          const errors = [...validationResult.errors];
+          if (!timeSlotsValid) {
+            errors.push({ field: 'timeSlots', error: timeSlotsValidation.value.error });
+          }
           logError('SAVE_CONSTRAINTS_VALIDATION_FAILED', new Error('Validation failed'), {
-            errors: validationResult.errors,
-            errorCount: validationResult.errors.length
+            errors: errors,
+            errorCount: errors.length
           });
-          errorMessage.value = `${validationResult.errors.length} fel måste åtgärdas innan sparning.`;
+          errorMessage.value = `${errors.length} fel måste åtgärdas innan sparning.`;
           scrollToFirstError();
           return;
         }
@@ -1354,6 +1394,20 @@ export default defineComponent({
           constraintsCount: Object.keys(constraintsToSave).length,
           presetId: props.presetId,
           eventDispatched: true
+        });
+        
+        // Emit time-slots-updated event
+        window.dispatchEvent(new CustomEvent('time-slots-updated', {
+          detail: {
+            timeSlots: JSON.parse(JSON.stringify(timeSlots.value)),
+            presetId: props.presetId,
+            timestamp: new Date().toISOString()
+          }
+        }));
+        
+        logInfo('TIME_SLOTS_UPDATED_EVENT_DISPATCHED', {
+          timeSlotsCount: timeSlots.value.length,
+          presetId: props.presetId
         });
         
         // Also update navigation state so if user navigates back, constraints are preserved
@@ -1576,6 +1630,56 @@ export default defineComponent({
       }
     };
 
+    // Time slot functions
+    const addTimeSlot = () => {
+      timeSlots.value.push({ day: daysOfWeek[0], start: '', end: '' });
+      markTimeSlotsEdited();
+      validateTimeSlots();
+    };
+
+    const removeTimeSlot = (index) => {
+      timeSlots.value.splice(index, 1);
+      markTimeSlotsEdited();
+      validateTimeSlots();
+    };
+
+    const markTimeSlotsEdited = () => {
+      // Mark as edited for save tracking
+      // Time slots are always considered edited when changed
+    };
+
+    // Validate time slots
+    const validateTimeSlots = () => {
+      if (timeSlots.value.length === 0) {
+        timeSlotsValidation.value = { valid: false, error: 'Minst en starttid krävs' };
+        return false;
+      }
+      
+      for (let i = 0; i < timeSlots.value.length; i++) {
+        const slot = timeSlots.value[i];
+        if (!slot.day || !slot.start || !slot.end) {
+          timeSlotsValidation.value = { valid: false, error: `Starttid ${i + 1} är ofullständig` };
+          return false;
+        }
+        
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(slot.start) || !timeRegex.test(slot.end)) {
+          timeSlotsValidation.value = { valid: false, error: `Starttid ${i + 1} har ogiltigt tidsformat` };
+          return false;
+        }
+        
+        const startMinutes = parseTimeStringToMinutes(slot.start);
+        const endMinutes = parseTimeStringToMinutes(slot.end);
+        if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+          timeSlotsValidation.value = { valid: false, error: `Starttid ${i + 1}: sluttid måste vara efter starttid` };
+          return false;
+        }
+      }
+      
+      timeSlotsValidation.value = { valid: true, error: null };
+      return true;
+    };
+
     // Back navigation
     const goBack = () => {
       try {
@@ -1605,6 +1709,15 @@ export default defineComponent({
         
         // Initialize constraints first
         initializeConstraints();
+        
+        // Initialize time slots from props
+        if (props.timeSlots && props.timeSlots.length > 0) {
+          timeSlots.value = JSON.parse(JSON.stringify(props.timeSlots));
+          logInfo('INIT_TIME_SLOTS_FROM_PROPS', { count: timeSlots.value.length });
+        } else {
+          timeSlots.value = [];
+          logInfo('INIT_TIME_SLOTS_EMPTY');
+        }
         
         // Store original snapshot for cancel functionality
         if (!originalConstraints.value) {
@@ -1659,7 +1772,12 @@ export default defineComponent({
       handleBooleanInput,
       handleArrayInput,
       physicalEducationSubjectsText,
-      parseTimeStringToMinutes
+      parseTimeStringToMinutes,
+      timeSlots,
+      daysOfWeek,
+      addTimeSlot,
+      removeTimeSlot,
+      timeSlotsValidation
     };
   }
 });
@@ -1974,6 +2092,84 @@ export default defineComponent({
 .constraint-item .constraint-value,
 .constraint-item .constraint-input {
   flex: 0 1 auto;
+}
+
+.time-slots-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1vh;
+}
+
+.add-time-slot-btn {
+  padding: 0.6vh 1.2vh;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 0.4vh;
+  font-size: 1.3vh;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.add-time-slot-btn:hover {
+  background: #5568d3;
+}
+
+.time-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 1vh;
+  padding: 0.8vh 0;
+  border-bottom: 0.1vh solid #f0f0f0;
+}
+
+.time-slot-day {
+  width: 12vh;
+  padding: 0.6vh;
+  border: 0.1vh solid #d1d5db;
+  border-radius: 0.4vh;
+  font-size: 1.3vh;
+}
+
+.time-slot-input {
+  width: 8vh;
+  padding: 0.6vh;
+  border: 0.1vh solid #d1d5db;
+  border-radius: 0.4vh;
+  text-align: center;
+  font-size: 1.3vh;
+}
+
+.time-separator {
+  color: #718096;
+  font-size: 1.3vh;
+}
+
+.remove-time-slot-btn {
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 0.4vh;
+  width: 2.5vh;
+  height: 2.5vh;
+  cursor: pointer;
+  font-size: 1.5vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.remove-time-slot-btn:hover {
+  background: #dc2626;
+}
+
+.empty-time-slots {
+  color: #718096;
+  font-style: italic;
+  padding: 1vh;
+  text-align: center;
+  font-size: 1.3vh;
 }
 </style>
 
