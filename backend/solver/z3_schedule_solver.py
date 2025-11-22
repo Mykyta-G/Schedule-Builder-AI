@@ -542,11 +542,25 @@ def _solve_basic(data: Dict[str, Any], *, debug: bool = False) -> Dict[str, Any]
                 unsat_core = [str(item) for item in solver.unsat_core()]
             except Z3Exception:
                 unsat_core = []
-            stats = solver.statistics()
-            stats_summary = {
-                str(stats.get_key(i)): stats.get_key_value(i)
-                for i in range(stats.size())
-            }
+            try:
+                stats = solver.statistics()
+                # Safely access statistics - Z3 statistics API may vary between versions
+                stats_summary = {}
+                try:
+                    # Try to get size if available
+                    if hasattr(stats, 'size'):
+                        size = stats.size()
+                        stats_summary = {
+                            str(stats.get_key(i)): stats.get_key_value(i)
+                            for i in range(size)
+                        }
+                except (AttributeError, Z3Exception, TypeError):
+                    # If size() doesn't work or raises AttributeError, skip stats
+                    # This is a known issue with some Z3 versions
+                    stats_summary = {}
+            except (AttributeError, Z3Exception, TypeError):
+                # If statistics() itself fails, just continue without stats
+                stats_summary = {}
             if unsat_core:
                 debug_details += f" | UNSAT core: {unsat_core}"
             if stats_summary:
@@ -665,25 +679,45 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
             "gymnastik",
         }
 
+    # Only apply class start time constraints if explicitly provided
+    # If not provided and time slots are being used, don't apply any restrictions
+    # (time slots already define when lessons can be scheduled)
     raw_class_earliest_start = constraints_cfg.get("classEarliestStartMinutes")
-    if raw_class_earliest_start is not None:
-        earliest_class_start_minutes = _coerce_non_negative_int(
-            raw_class_earliest_start, "constraints.classEarliestStartMinutes"
-        )
-    else:
-        earliest_class_start_minutes = 8 * 60
-
     raw_class_latest_start = constraints_cfg.get("classLatestStartMinutes")
-    if raw_class_latest_start is not None:
-        latest_class_start_minutes = _coerce_non_negative_int(
-            raw_class_latest_start, "constraints.classLatestStartMinutes"
-        )
+    
+    # Check if we're using time slots (either via term.dailySlots or timeSlots)
+    has_time_slots = bool(
+        data.get("term", {}).get("dailySlots") or 
+        data.get("term", {}).get("slots") or
+        data.get("timeSlots")
+    )
+    
+    # If time slots are being used and constraints are not explicitly set, don't apply defaults
+    # This allows time slots to be the sole source of scheduling restrictions
+    if has_time_slots and raw_class_earliest_start is None and raw_class_latest_start is None:
+        # Don't apply any class start time restrictions - let time slots handle it
+        earliest_class_start_minutes = None
+        latest_class_start_minutes = None
     else:
-        latest_class_start_minutes = 10 * 60
-    if latest_class_start_minutes < earliest_class_start_minutes:
-        raise ValueError(
-            "constraints.classLatestStartMinutes must be greater than or equal to constraints.classEarliestStartMinutes"
-        )
+        # Apply constraints if provided, or use defaults if not using time slots
+        if raw_class_earliest_start is not None:
+            earliest_class_start_minutes = _coerce_non_negative_int(
+                raw_class_earliest_start, "constraints.classEarliestStartMinutes"
+            )
+        else:
+            earliest_class_start_minutes = 8 * 60
+
+        if raw_class_latest_start is not None:
+            latest_class_start_minutes = _coerce_non_negative_int(
+                raw_class_latest_start, "constraints.classLatestStartMinutes"
+            )
+        else:
+            latest_class_start_minutes = 10 * 60
+            
+        if latest_class_start_minutes < earliest_class_start_minutes:
+            raise ValueError(
+                "constraints.classLatestStartMinutes must be greater than or equal to constraints.classEarliestStartMinutes"
+            )
 
     lunch_cfg_raw = constraints_cfg.get("lunchBreak")
     lunch_break_enabled = True
@@ -1045,12 +1079,15 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                 f"signature_domain_{idx}",
             )
 
-        for slot_index in session["slotDomain"]:
-            if slot_start_minutes[slot_index] < earliest_class_start_minutes:
-                add_constraint(
-                    slot_vars[idx] != slot_index,
-                    f"class_earliest_start_block_{idx}_{slot_index}",
-                )
+        # Only apply class start time constraints if they were explicitly set
+        # (not None means they were either provided or are defaults when not using time slots)
+        if earliest_class_start_minutes is not None:
+            for slot_index in session["slotDomain"]:
+                if slot_start_minutes[slot_index] < earliest_class_start_minutes:
+                    add_constraint(
+                        slot_vars[idx] != slot_index,
+                        f"class_earliest_start_block_{idx}_{slot_index}",
+                    )
 
         duration_guards = [
             And(
@@ -1219,7 +1256,18 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
             for idx in indices:
                 slot_pairs = []
                 for slot_index in sessions[idx]["slotDomainByDay"].get(day_index, []):
-                    if slot_start_minutes[slot_index] <= latest_class_start_minutes:
+                    # Only apply latest start constraint if it was explicitly set
+                    # If None, allow all slots (time slots will handle restrictions)
+                    if latest_class_start_minutes is None:
+                        # No constraint - allow all slots in the domain
+                        slot_pairs.append(
+                            And(
+                                day_vars[idx] == day_index,
+                                slot_vars[idx] == slot_index,
+                            )
+                        )
+                    elif slot_start_minutes[slot_index] <= latest_class_start_minutes:
+                        # Constraint is set - only allow slots within the window
                         slot_pairs.append(
                             And(
                                 day_vars[idx] == day_index,
@@ -1251,11 +1299,25 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                 unsat_core = [str(item) for item in solver.unsat_core()]
             except Z3Exception:
                 unsat_core = []
-            stats = solver.statistics()
-            stats_summary = {
-                str(stats.get_key(i)): stats.get_key_value(i)
-                for i in range(stats.size())
-            }
+            try:
+                stats = solver.statistics()
+                # Safely access statistics - Z3 statistics API may vary between versions
+                stats_summary = {}
+                try:
+                    # Try to get size if available
+                    if hasattr(stats, 'size'):
+                        size = stats.size()
+                        stats_summary = {
+                            str(stats.get_key(i)): stats.get_key_value(i)
+                            for i in range(size)
+                        }
+                except (AttributeError, Z3Exception, TypeError):
+                    # If size() doesn't work or raises AttributeError, skip stats
+                    # This is a known issue with some Z3 versions
+                    stats_summary = {}
+            except (AttributeError, Z3Exception, TypeError):
+                # If statistics() itself fails, just continue without stats
+                stats_summary = {}
             if unsat_core:
                 debug_details += f" | UNSAT core: {unsat_core}"
             if stats_summary:
@@ -1503,14 +1565,22 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
 
 
 def solve_schedule(data: Dict[str, Any]) -> Dict[str, Any]:
-    debug_enabled = bool(
-        data.get("debug")
-        or data.get("debugMode")
-        or data.get("debug_mode")
-    )
-    if data.get("lessonTemplates"):
-        return _solve_structured(data, debug=debug_enabled)
-    return _solve_basic(data, debug=debug_enabled)
+    try:
+        debug_enabled = bool(
+            data.get("debug")
+            or data.get("debugMode")
+            or data.get("debug_mode")
+        )
+        if data.get("lessonTemplates"):
+            return _solve_structured(data, debug=debug_enabled)
+        return _solve_basic(data, debug=debug_enabled)
+    except Exception as err:
+        # Re-raise with more context if the error message is empty
+        error_msg = str(err) if str(err) else repr(err)
+        if not error_msg:
+            error_msg = f"Unknown error in solve_schedule: {type(err).__name__}"
+            raise RuntimeError(error_msg) from err
+        raise
 
 
 def main() -> None:
@@ -1519,11 +1589,22 @@ def main() -> None:
         result = solve_schedule(data)
         sys.stdout.write(json.dumps(result))
     except Exception as err:  # pragma: no cover - error path surfaced to caller
+        # Ensure we always have a meaningful error message
+        error_msg = str(err) if str(err) else repr(err)
+        if not error_msg:
+            error_msg = f"Unknown error: {type(err).__name__}"
+        
+        # Also log to stderr for debugging (visible in terminal)
+        import traceback
+        error_details = traceback.format_exc()
+        sys.stderr.write(f"Z3 Solver Error:\n{error_details}\n")
+        
         sys.stdout.write(
             json.dumps(
                 {
                     "success": False,
-                    "error": str(err),
+                    "error": error_msg,
+                    "errorType": type(err).__name__,
                 }
             )
         )

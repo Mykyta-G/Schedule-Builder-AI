@@ -19,7 +19,11 @@ const ERROR_CATEGORIES = {
   STATE_RESTORE: 'STATE_RESTORE',
   SCHEDULE_DISPLAY: 'SCHEDULE_DISPLAY',
   FILTER_CHANGE: 'FILTER_CHANGE',
-  COMPUTED_UPDATE: 'COMPUTED_UPDATE'
+  COMPUTED_UPDATE: 'COMPUTED_UPDATE',
+  TIME_SLOT_ERROR: 'TIME_SLOT_ERROR',
+  TIME_SLOT_VALIDATION: 'TIME_SLOT_VALIDATION',
+  TIME_SLOT_INIT: 'TIME_SLOT_INIT',
+  TIME_SLOT_SAVE: 'TIME_SLOT_SAVE'
 };
 
 const LOG_LEVELS = {
@@ -286,6 +290,86 @@ export const logComputedUpdate = (computedName, details = {}) => {
     console.debug(`[${ERROR_CATEGORIES.COMPUTED_UPDATE}] ${computedName}`, logEntry);
   }
   return logEntry;
+};
+
+/**
+ * Log time slot validation errors with field context
+ */
+export const logTimeSlotValidationError = (day, start, end, errorMessage, validationRule = null) => {
+  return logError('VALIDATE_TIME_SLOT', new Error(errorMessage), {
+    category: ERROR_CATEGORIES.TIME_SLOT_VALIDATION,
+    day,
+    start,
+    end,
+    validationRule,
+    errorMessage
+  });
+};
+
+/**
+ * Log time slot initialization and migration operations
+ */
+export const logTimeSlotInit = (action, details = {}) => {
+  const logEntry = createLogEntry(LOG_LEVELS.INFO, ERROR_CATEGORIES.TIME_SLOT_INIT, action, {
+    component: details.component || 'ConstraintsPage',
+    details: {
+      inputCount: details.inputCount || 0,
+      outputCount: details.outputCount || 0,
+      preservedDays: details.preservedDays || [],
+      createdDays: details.createdDays || [],
+      migratedDays: details.migratedDays || [],
+      presetId: details.presetId || null,
+      ...details
+    }
+  });
+  
+  console.log(`[${ERROR_CATEGORIES.TIME_SLOT_INIT}] ${action}`, logEntry);
+  return logEntry;
+};
+
+/**
+ * Log time slot save operations
+ */
+export const logTimeSlotSave = (action, timeSlots, success, error = null) => {
+  const logEntry = createLogEntry(
+    success ? LOG_LEVELS.INFO : LOG_LEVELS.ERROR,
+    ERROR_CATEGORIES.TIME_SLOT_SAVE,
+    action,
+    {
+      component: 'ConstraintsPage',
+      success,
+      timeSlotsCount: Array.isArray(timeSlots) ? timeSlots.length : 0,
+      timeSlots: JSON.stringify(timeSlots || []),
+      error: error ? {
+        message: error?.message || String(error),
+        stack: error?.stack,
+        name: error?.name
+      } : null,
+      timestamp: new Date().toISOString()
+    }
+  );
+  
+  if (success) {
+    console.log(`[${ERROR_CATEGORIES.TIME_SLOT_SAVE}] ${action}`, logEntry);
+  } else {
+    console.error(`[${ERROR_CATEGORIES.TIME_SLOT_SAVE}] ${action}`, logEntry);
+  }
+  
+  return logEntry;
+};
+
+/**
+ * Log time slot structure errors (mismatch in expected format)
+ */
+export const logTimeSlotStructureError = (expectedCount, actualCount, details = {}) => {
+  return logError('TIME_SLOT_STRUCTURE_MISMATCH', new Error(`Expected ${expectedCount} time slots, got ${actualCount}`), {
+    category: ERROR_CATEGORIES.TIME_SLOT_ERROR,
+    expectedCount,
+    actualCount,
+    timeSlots: details.timeSlots ? JSON.stringify(details.timeSlots) : null,
+    days: details.days || [],
+    ...details
+  });
 };
 
 /**

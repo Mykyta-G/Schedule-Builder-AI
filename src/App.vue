@@ -163,9 +163,22 @@ export default defineComponent({
         }
         
         // Capture timeSlots for constraints page
+        // Only update if we don't already have time slots for this preset, or if the incoming slots are newer
         if (event.detail.timeSlots) {
-          globalTimeSlots.value = event.detail.timeSlots;
-          globalTimeSlotsPresetId.value = event.detail.presetId || null;
+          // If we already have time slots for this preset, keep them (they might be more recent from ConstraintsPage)
+          // Only update if we don't have any, or if it's a different preset
+          if (!globalTimeSlots.value || globalTimeSlots.value.length === 0 || 
+              globalTimeSlotsPresetId.value !== event.detail.presetId) {
+            globalTimeSlots.value = event.detail.timeSlots;
+            globalTimeSlotsPresetId.value = event.detail.presetId || null;
+          } else {
+            // We have existing time slots for this preset - keep them (they're likely more recent)
+            console.log('[App] Keeping existing globalTimeSlots for preset', {
+              presetId: event.detail.presetId,
+              existingCount: globalTimeSlots.value.length,
+              incomingCount: event.detail.timeSlots.length
+            });
+          }
         }
         
         // Preserve ViewerPage state when navigating to/from constraints
@@ -256,6 +269,46 @@ export default defineComponent({
         }
       });
       
+      // Helper function to normalize day names
+      const normalizeDayName = (day) => {
+        if (!day || typeof day !== 'string') return 'Monday';
+        const dayMap = {
+          'monday': 'Monday', 'mon': 'Monday', 'måndag': 'Monday',
+          'tuesday': 'Tuesday', 'tue': 'Tuesday', 'tisdag': 'Tuesday',
+          'wednesday': 'Wednesday', 'wed': 'Wednesday', 'onsdag': 'Wednesday',
+          'thursday': 'Thursday', 'thu': 'Thursday', 'torsdag': 'Thursday',
+          'friday': 'Friday', 'fri': 'Friday', 'fredag': 'Friday'
+        };
+        return dayMap[day.trim().toLowerCase()] || 'Monday';
+      };
+
+      // Helper function to normalize time slots to fixed 5-day structure
+      const normalizeTimeSlots = (slots, defaultStart = '08:00', defaultEnd = '16:30') => {
+        if (!Array.isArray(slots) || slots.length === 0) {
+          const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+          return weekdays.map(day => ({ day, start: defaultStart, end: defaultEnd }));
+        }
+        
+        const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+        const existingMap = new Map();
+        
+        slots.forEach(slot => {
+          if (slot && slot.day) {
+            const normalizedDay = normalizeDayName(slot.day);
+            if (normalizedDay && slot.start && slot.end) {
+              existingMap.set(normalizedDay, { start: slot.start, end: slot.end });
+            }
+          }
+        });
+        
+        return weekdays.map(day => {
+          if (existingMap.has(day)) {
+            return { day, ...existingMap.get(day) };
+          }
+          return { day, start: defaultStart, end: defaultEnd };
+        });
+      };
+
       // Listen for time-slots-updated event (always active since App.vue is always mounted)
       window.addEventListener('time-slots-updated', (event) => {
         try {
@@ -263,21 +316,47 @@ export default defineComponent({
           console.log('[App] Received time-slots-updated event', {
             timeSlotsCount: (timeSlots || []).length,
             presetId,
+            currentPage: currentPage.value,
+            hasExistingTimeSlots: globalTimeSlots.value.length > 0,
+            existingPresetId: globalTimeSlotsPresetId.value,
             timestamp: new Date().toISOString()
           });
           
-          // Store globally so ViewerPage can access when it remounts
-          globalTimeSlots.value = timeSlots || [];
-          globalTimeSlotsPresetId.value = presetId;
+          // Normalize time slots to fixed 5-day structure before storing
+          const normalizedSlots = normalizeTimeSlots(timeSlots || [], '08:00', '16:30');
           
-          // Dispatch to ViewerPage if it's mounted (it will also listen directly)
-          // This ensures ViewerPage gets the update even if it's currently mounted
+          // If we're on the constraints page, always update (it's a save from ConstraintsPage)
+          // Otherwise, only update if we don't have time slots for this preset yet
+          // This prevents ViewerPage state restoration from overwriting saved time slots
+          const shouldUpdate = currentPage.value === 'constraints' || 
+                                !globalTimeSlots.value || 
+                                globalTimeSlots.value.length === 0 ||
+                                globalTimeSlotsPresetId.value !== presetId;
+          
+          if (shouldUpdate) {
+            // Store globally so ViewerPage can access when it remounts
+            globalTimeSlots.value = normalizedSlots;
+            globalTimeSlotsPresetId.value = presetId;
+            
+            console.log('[App] Time slots updated', {
+              stored: globalTimeSlots.value.length > 0,
+              presetId
+            });
+          } else {
+            console.log('[App] Keeping existing time slots (prevent overwrite from state restoration)', {
+              existingCount: globalTimeSlots.value.length,
+              incomingCount: normalizedSlots.length,
+              presetId
+            });
+          }
+          
+          // Always dispatch to ViewerPage so it can sync (even if we didn't update globalTimeSlots)
+          // This ensures ViewerPage gets updates from ConstraintsPage
           window.dispatchEvent(new CustomEvent('time-slots-updated-viewer', {
-            detail: { timeSlots: timeSlots || [], presetId }
+            detail: { timeSlots: normalizedSlots, presetId }
           }));
           
-          console.log('[App] Time slots stored and forwarded', {
-            stored: globalTimeSlots.value.length > 0,
+          console.log('[App] Time slots forwarded to ViewerPage', {
             forwarded: true
           });
         } catch (error) {

@@ -437,20 +437,27 @@
       <div class="constraint-category">
         <h3 class="category-title">Starttid</h3>
         <div class="constraint-items">
-          <div class="time-slots-header">
-            <button class="add-time-slot-btn" @click="addTimeSlot">+ Lägg till starttid</button>
-          </div>
-          <div v-for="(slot, index) in timeSlots" :key="index" class="time-slot-row">
-            <select v-model="slot.day" class="time-slot-day">
-              <option v-for="day in daysOfWeek" :key="day" :value="day">{{ day }}</option>
-            </select>
-            <input v-model="slot.start" type="text" placeholder="08:00" class="time-slot-input" />
+          <div v-for="(slot, index) in timeSlots" :key="slot.day" class="time-slot-row">
+            <div class="time-slot-day-locked">{{ slot.day }}</div>
+            <input 
+              v-model="slot.start" 
+              type="text" 
+              placeholder="08:00" 
+              class="time-slot-input" 
+              pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+              @input="validateTimeSlots"
+              @blur="validateTimeSlots"
+            />
             <span class="time-separator">-</span>
-            <input v-model="slot.end" type="text" placeholder="09:00" class="time-slot-input" />
-            <button class="remove-time-slot-btn" @click="removeTimeSlot(index)">×</button>
-          </div>
-          <div v-if="timeSlots.length === 0" class="empty-time-slots">
-            Inga starttider tillagda ännu
+            <input 
+              v-model="slot.end" 
+              type="text" 
+              placeholder="16:30" 
+              class="time-slot-input" 
+              pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+              @input="validateTimeSlots"
+              @blur="validateTimeSlots"
+            />
           </div>
           <div v-if="!timeSlotsValidation.valid" class="validation-error">
             {{ timeSlotsValidation.error }}
@@ -463,6 +470,12 @@
 
 <script>
 import { defineComponent, ref, reactive, computed, onMounted } from 'vue';
+import { 
+  logTimeSlotValidationError, 
+  logTimeSlotInit, 
+  logTimeSlotSave, 
+  logTimeSlotStructureError 
+} from '../utils/errorLogger';
 
 export default defineComponent({
   name: 'ConstraintsPage',
@@ -555,6 +568,7 @@ export default defineComponent({
 
     // Time slots management
     const timeSlots = ref([]);
+    const originalTimeSlots = ref(null); // Track original time slots for change detection
     const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
     const timeSlotsValidation = ref({ valid: true, error: null });
 
@@ -831,10 +845,24 @@ export default defineComponent({
 
     // Track if any changes have been made since last save
     const hasUnsavedChanges = computed(() => {
-      if (!originalConstraints.value) return false;
-      const current = JSON.stringify(customConstraints);
-      const original = JSON.stringify(originalConstraints.value);
-      return current !== original;
+      // Check constraints changes
+      if (originalConstraints.value) {
+        const current = JSON.stringify(customConstraints);
+        const original = JSON.stringify(originalConstraints.value);
+        if (current !== original) return true;
+      }
+      
+      // Check time slots changes
+      if (originalTimeSlots.value) {
+        const current = JSON.stringify(timeSlots.value);
+        const original = JSON.stringify(originalTimeSlots.value);
+        if (current !== original) return true;
+      } else if (timeSlots.value.length > 0) {
+        // If we have time slots but no original snapshot, consider it changed
+        return true;
+      }
+      
+      return false;
     });
 
     // Track if any field is currently invalid
@@ -1396,17 +1424,20 @@ export default defineComponent({
           eventDispatched: true
         });
         
-        // Emit time-slots-updated event
+        // Time slots are already validated above (line 1362), so we can safely dispatch
+        // Emit time-slots-updated event with validated data
+        const timeSlotsToDispatch = JSON.parse(JSON.stringify(timeSlots.value));
         window.dispatchEvent(new CustomEvent('time-slots-updated', {
           detail: {
-            timeSlots: JSON.parse(JSON.stringify(timeSlots.value)),
+            timeSlots: timeSlotsToDispatch,
             presetId: props.presetId,
             timestamp: new Date().toISOString()
           }
         }));
         
+        logTimeSlotSave('SAVE_TIME_SLOTS_SUCCESS', timeSlotsToDispatch, true);
         logInfo('TIME_SLOTS_UPDATED_EVENT_DISPATCHED', {
-          timeSlotsCount: timeSlots.value.length,
+          timeSlotsCount: timeSlotsToDispatch.length,
           presetId: props.presetId
         });
         
@@ -1421,8 +1452,9 @@ export default defineComponent({
           }
         }));
         
-        // Update original snapshot (changes are now saved)
+        // Update original snapshots (changes are now saved)
         originalConstraints.value = JSON.parse(JSON.stringify(customConstraints));
+        originalTimeSlots.value = JSON.parse(JSON.stringify(timeSlots.value));
         
         // Don't exit edit mode - keep it always enabled
         // exitEditMode();
@@ -1630,17 +1662,115 @@ export default defineComponent({
       }
     };
 
-    // Time slot functions
-    const addTimeSlot = () => {
-      timeSlots.value.push({ day: daysOfWeek[0], start: '', end: '' });
-      markTimeSlotsEdited();
-      validateTimeSlots();
+    // Helper function to normalize day names to standard English format
+    const normalizeDayName = (day) => {
+      if (!day || typeof day !== 'string') return 'Monday';
+      
+      const dayMap = {
+        'monday': 'Monday', 'mon': 'Monday', 'måndag': 'Monday',
+        'tuesday': 'Tuesday', 'tue': 'Tuesday', 'tisdag': 'Tuesday',
+        'wednesday': 'Wednesday', 'wed': 'Wednesday', 'onsdag': 'Wednesday',
+        'thursday': 'Thursday', 'thu': 'Thursday', 'torsdag': 'Thursday',
+        'friday': 'Friday', 'fri': 'Friday', 'fredag': 'Friday'
+      };
+      
+      const normalized = day.trim().toLowerCase();
+      return dayMap[normalized] || 'Monday'; // Default fallback
     };
 
-    const removeTimeSlot = (index) => {
-      timeSlots.value.splice(index, 1);
-      markTimeSlotsEdited();
-      validateTimeSlots();
+    // Create default time slots structure (5 weekdays)
+    const createDefaultTimeSlots = (defaultStart = '08:00', defaultEnd = '16:30') => {
+      return daysOfWeek.map(day => ({
+        day,
+        start: defaultStart,
+        end: defaultEnd
+      }));
+    };
+
+    // Migrate existing time slots to fixed 5-day structure
+    const migrateTimeSlotsToFixedStructure = (existingSlots, defaultStart = '08:00', defaultEnd = '16:30') => {
+      try {
+        // Step 1: Create map of existing slots by normalized day name
+        const existingMap = new Map();
+        if (Array.isArray(existingSlots)) {
+          existingSlots.forEach(slot => {
+            if (slot && slot.day) {
+              const normalizedDay = normalizeDayName(slot.day);
+              if (normalizedDay && slot.start && slot.end) {
+                existingMap.set(normalizedDay, { start: slot.start, end: slot.end });
+              }
+            }
+          });
+        }
+        
+        // Step 2: Build fixed structure with 5 weekdays
+        const result = daysOfWeek.map(day => {
+          if (existingMap.has(day)) {
+            return { day, ...existingMap.get(day) };
+          }
+          return { day, start: defaultStart, end: defaultEnd };
+        });
+        
+        // Step 3: Log migration actions
+        const preservedDays = Array.from(existingMap.keys());
+        const createdDays = daysOfWeek.filter(d => !existingMap.has(d));
+        logTimeSlotInit('MIGRATE_TO_FIXED_STRUCTURE', {
+          component: 'ConstraintsPage',
+          inputCount: existingSlots?.length || 0,
+          outputCount: result.length,
+          preservedDays,
+          createdDays,
+          presetId: props.presetId
+        });
+        
+        return result;
+      } catch (error) {
+        logError('MIGRATE_TIME_SLOTS', error, { existingSlots });
+        // Fallback to defaults
+        return createDefaultTimeSlots(defaultStart, defaultEnd);
+      }
+    };
+
+    // Initialize time slots with fixed 5-day structure
+    const initializeTimeSlots = () => {
+      try {
+        // If we have props.timeSlots, migrate them to fixed structure
+        if (props.timeSlots && Array.isArray(props.timeSlots) && props.timeSlots.length > 0) {
+          const migrated = migrateTimeSlotsToFixedStructure(props.timeSlots, '08:00', '16:30');
+          timeSlots.value = migrated;
+          logTimeSlotInit('INIT_FROM_PROPS', {
+            component: 'ConstraintsPage',
+            inputCount: props.timeSlots.length,
+            outputCount: migrated.length,
+            presetId: props.presetId
+          });
+        } else {
+          // Initialize with defaults
+          timeSlots.value = createDefaultTimeSlots('08:00', '16:30');
+          logTimeSlotInit('INIT_WITH_DEFAULTS', {
+            component: 'ConstraintsPage',
+            outputCount: timeSlots.value.length,
+            presetId: props.presetId
+          });
+        }
+        
+        // Validate after initialization
+        validateTimeSlots();
+        
+        // Initialize original snapshot if not already set
+        if (!originalTimeSlots.value) {
+          originalTimeSlots.value = JSON.parse(JSON.stringify(timeSlots.value));
+        }
+      } catch (error) {
+        logError('INITIALIZE_TIME_SLOTS', error, { presetId: props.presetId });
+        // Fallback to defaults
+        timeSlots.value = createDefaultTimeSlots('08:00', '16:30');
+        validateTimeSlots();
+        // Initialize original snapshot even on error
+        if (!originalTimeSlots.value) {
+          originalTimeSlots.value = JSON.parse(JSON.stringify(timeSlots.value));
+        }
+      }
     };
 
     const markTimeSlotsEdited = () => {
@@ -1648,30 +1778,63 @@ export default defineComponent({
       // Time slots are always considered edited when changed
     };
 
-    // Validate time slots
+    // Validate time slots - enforce exactly 5 weekdays
     const validateTimeSlots = () => {
-      if (timeSlots.value.length === 0) {
-        timeSlotsValidation.value = { valid: false, error: 'Minst en starttid krävs' };
+      // Check 1: Exactly 5 entries required
+      if (timeSlots.value.length !== 5) {
+        const errorMsg = `Exactly 5 time slots required (Monday-Friday). Found ${timeSlots.value.length}.`;
+        timeSlotsValidation.value = { valid: false, error: errorMsg };
+        logTimeSlotStructureError(5, timeSlots.value.length, {
+          timeSlots: timeSlots.value,
+          days: timeSlots.value.map(s => s.day)
+        });
         return false;
       }
       
+      // Check 2: All 5 weekdays must be present
+      const days = timeSlots.value.map(s => s.day);
+      const missingDays = daysOfWeek.filter(d => !days.includes(d));
+      if (missingDays.length > 0) {
+        const errorMsg = `Missing required days: ${missingDays.join(', ')}`;
+        timeSlotsValidation.value = { valid: false, error: errorMsg };
+        logTimeSlotValidationError(null, null, null, errorMsg, 'MISSING_DAYS');
+        return false;
+      }
+      
+      // Check 3: No duplicate days
+      const uniqueDays = new Set(days);
+      if (uniqueDays.size !== 5) {
+        const duplicates = days.filter((d, i) => days.indexOf(d) !== i);
+        const errorMsg = `Duplicate days detected: ${[...new Set(duplicates)].join(', ')}`;
+        timeSlotsValidation.value = { valid: false, error: errorMsg };
+        logTimeSlotValidationError(null, null, null, errorMsg, 'DUPLICATE_DAYS');
+        return false;
+      }
+      
+      // Check 4: Each entry has valid start/end times
       for (let i = 0; i < timeSlots.value.length; i++) {
         const slot = timeSlots.value[i];
         if (!slot.day || !slot.start || !slot.end) {
-          timeSlotsValidation.value = { valid: false, error: `Starttid ${i + 1} är ofullständig` };
+          const errorMsg = `Time slot ${i + 1} (${slot.day || 'unknown'}): Start and end times are required`;
+          timeSlotsValidation.value = { valid: false, error: errorMsg };
+          logTimeSlotValidationError(slot.day, slot.start, slot.end, errorMsg, 'MISSING_TIMES');
           return false;
         }
         
         const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
         if (!timeRegex.test(slot.start) || !timeRegex.test(slot.end)) {
-          timeSlotsValidation.value = { valid: false, error: `Starttid ${i + 1} har ogiltigt tidsformat` };
+          const errorMsg = `Time slot ${i + 1} (${slot.day}): Invalid time format. Use HH:MM (e.g., 08:00)`;
+          timeSlotsValidation.value = { valid: false, error: errorMsg };
+          logTimeSlotValidationError(slot.day, slot.start, slot.end, errorMsg, 'INVALID_FORMAT');
           return false;
         }
         
         const startMinutes = parseTimeStringToMinutes(slot.start);
         const endMinutes = parseTimeStringToMinutes(slot.end);
         if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
-          timeSlotsValidation.value = { valid: false, error: `Starttid ${i + 1}: sluttid måste vara efter starttid` };
+          const errorMsg = `Time slot ${i + 1} (${slot.day}): End time must be after start time`;
+          timeSlotsValidation.value = { valid: false, error: errorMsg };
+          logTimeSlotValidationError(slot.day, slot.start, slot.end, errorMsg, 'INVALID_TIME_RANGE');
           return false;
         }
       }
@@ -1710,18 +1873,15 @@ export default defineComponent({
         // Initialize constraints first
         initializeConstraints();
         
-        // Initialize time slots from props
-        if (props.timeSlots && props.timeSlots.length > 0) {
-          timeSlots.value = JSON.parse(JSON.stringify(props.timeSlots));
-          logInfo('INIT_TIME_SLOTS_FROM_PROPS', { count: timeSlots.value.length });
-        } else {
-          timeSlots.value = [];
-          logInfo('INIT_TIME_SLOTS_EMPTY');
-        }
+        // Initialize time slots with fixed 5-day structure
+        initializeTimeSlots();
         
-        // Store original snapshot for cancel functionality
+        // Store original snapshots for cancel functionality and change tracking
         if (!originalConstraints.value) {
           originalConstraints.value = JSON.parse(JSON.stringify(customConstraints));
+        }
+        if (!originalTimeSlots.value) {
+          originalTimeSlots.value = JSON.parse(JSON.stringify(timeSlots.value));
         }
         
         if (!props.solverOptions) {
@@ -1775,8 +1935,6 @@ export default defineComponent({
       parseTimeStringToMinutes,
       timeSlots,
       daysOfWeek,
-      addTimeSlot,
-      removeTimeSlot,
       timeSlotsValidation
     };
   }
@@ -2094,27 +2252,6 @@ export default defineComponent({
   flex: 0 1 auto;
 }
 
-.time-slots-header {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 1vh;
-}
-
-.add-time-slot-btn {
-  padding: 0.6vh 1.2vh;
-  background: #667eea;
-  color: white;
-  border: none;
-  border-radius: 0.4vh;
-  font-size: 1.3vh;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.add-time-slot-btn:hover {
-  background: #5568d3;
-}
-
 .time-slot-row {
   display: flex;
   align-items: center;
@@ -2123,12 +2260,20 @@ export default defineComponent({
   border-bottom: 0.1vh solid #f0f0f0;
 }
 
-.time-slot-day {
+.time-slot-day-locked {
   width: 12vh;
   padding: 0.6vh;
-  border: 0.1vh solid #d1d5db;
+  border: 0.1vh solid #e2e8f0;
   border-radius: 0.4vh;
   font-size: 1.3vh;
+  background: #f7fafc;
+  color: #4a5568;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  cursor: default;
 }
 
 .time-slot-input {
@@ -2142,33 +2287,6 @@ export default defineComponent({
 
 .time-separator {
   color: #718096;
-  font-size: 1.3vh;
-}
-
-.remove-time-slot-btn {
-  background: #ef4444;
-  color: white;
-  border: none;
-  border-radius: 0.4vh;
-  width: 2.5vh;
-  height: 2.5vh;
-  cursor: pointer;
-  font-size: 1.5vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-}
-
-.remove-time-slot-btn:hover {
-  background: #dc2626;
-}
-
-.empty-time-slots {
-  color: #718096;
-  font-style: italic;
-  padding: 1vh;
-  text-align: center;
   font-size: 1.3vh;
 }
 </style>
