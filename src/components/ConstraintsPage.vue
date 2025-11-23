@@ -247,6 +247,31 @@
             <span v-if="isDefault('disableTransitionBuffers') && !isEditMode" class="default-badge">Standard</span>
             <span v-if="editedFields.disableTransitionBuffers && isEditMode" class="edited-badge">Redigerad</span>
           </div>
+          <div class="constraint-item">
+            <span class="constraint-label">Minsta paus mellan lektioner (minuter):</span>
+            <input
+              v-if="isEditMode"
+              type="number"
+              v-model.number="customConstraints.minBreakDurationMinutes"
+              @input="handleNumberInput('minBreakDurationMinutes', $event)"
+              @focus="onFieldFocus('minBreakDurationMinutes')"
+              @blur="onFieldBlur('minBreakDurationMinutes')"
+              :min="5"
+              :max="120"
+              step="1"
+              class="constraint-input constraint-input-number"
+              :class="{ 
+                'input-invalid': !fieldValidation.minBreakDurationMinutes.valid,
+                'input-edited': editedFields.minBreakDurationMinutes
+              }"
+            />
+            <span v-else class="constraint-value">{{ formatMinutes(activeConstraints.minBreakDurationMinutes) }}</span>
+            <span v-if="!fieldValidation.minBreakDurationMinutes.valid" class="validation-error">
+              {{ fieldValidation.minBreakDurationMinutes.error }}
+            </span>
+            <span v-if="isDefault('minBreakDurationMinutes') && !isEditMode" class="default-badge">Standard</span>
+            <span v-if="editedFields.minBreakDurationMinutes && isEditMode" class="edited-badge">Redigerad</span>
+          </div>
         </div>
       </div>
 
@@ -508,6 +533,7 @@ export default defineComponent({
       maxTeacherSessionsPerDay: null,
       disableSubjectSpread: null,
       disableTransitionBuffers: null,
+      minBreakDurationMinutes: null,
       physicalEducationBufferMinutes: null,
       physicalEducationSubjects: null,
       classEarliestStartMinutes: null,
@@ -532,6 +558,7 @@ export default defineComponent({
       maxTeacherSessionsPerDay: false,
       disableSubjectSpread: false,
       disableTransitionBuffers: false,
+      minBreakDurationMinutes: false,
       physicalEducationBufferMinutes: false,
       physicalEducationSubjects: false,
       classEarliestStartMinutes: false,
@@ -553,6 +580,7 @@ export default defineComponent({
       maxTeacherSessionsPerDay: { valid: true, error: null, warning: null },
       disableSubjectSpread: { valid: true, error: null, warning: null },
       disableTransitionBuffers: { valid: true, error: null, warning: null },
+      minBreakDurationMinutes: { valid: true, error: null, warning: null },
       physicalEducationBufferMinutes: { valid: true, error: null, warning: null },
       physicalEducationSubjects: { valid: true, error: null, warning: null },
       classEarliestStartMinutes: { valid: true, error: null, warning: null },
@@ -584,6 +612,7 @@ export default defineComponent({
       maxTeacherSessionsPerDay: 3,        // line 641
       disableSubjectSpread: false,        // line 643
       disableTransitionBuffers: false,    // line 644
+      minBreakDurationMinutes: 5,          // Minimum break duration between lessons
       physicalEducationBufferMinutes: 15, // line 652
       physicalEducationSubjects: ['Idrott och hälsa 1', 'Idrott', 'Gymnastik'],
       classEarliestStartMinutes: 480,     // 8*60, line 674
@@ -788,6 +817,7 @@ export default defineComponent({
         customConstraints.maxTeacherSessionsPerDay = baseConstraints.maxTeacherSessionsPerDay;
         customConstraints.disableSubjectSpread = baseConstraints.disableSubjectSpread;
         customConstraints.disableTransitionBuffers = baseConstraints.disableTransitionBuffers;
+        customConstraints.minBreakDurationMinutes = baseConstraints.minBreakDurationMinutes ?? CONSTRAINT_DEFAULTS.minBreakDurationMinutes;
         customConstraints.physicalEducationBufferMinutes = baseConstraints.physicalEducationBufferMinutes;
         customConstraints.physicalEducationSubjects = Array.isArray(baseConstraints.physicalEducationSubjects) 
           ? [...baseConstraints.physicalEducationSubjects]
@@ -1080,6 +1110,28 @@ export default defineComponent({
       return { valid: true, error: null, warning };
     };
 
+    const validateMinBreakDuration = (field, value) => {
+      if (value === null || value === undefined) {
+        return { valid: false, error: 'Värdet får inte vara tomt', warning: null };
+      }
+      // Handle empty string or whitespace-only input
+      if (typeof value === 'string' && value.trim().length === 0) {
+        return { valid: false, error: 'Värdet får inte vara tomt', warning: null };
+      }
+      const numValue = parseInt(value, 10);
+      if (isNaN(numValue)) {
+        return { valid: false, error: 'Måste vara ett nummer', warning: null };
+      }
+      if (numValue < 5) {
+        return { valid: false, error: 'Måste vara minst 5 minuter', warning: null };
+      }
+      // Add reasonable maximum (120 minutes, same as other buffer constraints)
+      if (numValue > 120) {
+        return { valid: false, error: 'Får inte överstiga 120 minuter', warning: null };
+      }
+      return { valid: true, error: null, warning: null };
+    };
+
     const validateSubjectArray = (field, value) => {
       if (!Array.isArray(value)) {
         return { valid: false, error: 'Måste vara en lista med ämnen', warning: null };
@@ -1221,6 +1273,8 @@ export default defineComponent({
           validation = validateClassStartTime(fieldPath, value, active);
         } else if (fieldPath === 'physicalEducationBufferMinutes') {
           validation = validateBufferMinutes(fieldPath, value);
+        } else if (fieldPath === 'minBreakDurationMinutes') {
+          validation = validateMinBreakDuration(fieldPath, value);
         } else if (fieldPath === 'physicalEducationSubjects') {
           validation = validateSubjectArray(fieldPath, value);
         } else if (fieldPath.startsWith('lunchBreak.')) {
@@ -1319,6 +1373,10 @@ export default defineComponent({
         constraints.disableTransitionBuffers = active.disableTransitionBuffers;
       }
       
+      if (active.minBreakDurationMinutes !== null && active.minBreakDurationMinutes !== undefined) {
+        constraints.minBreakDurationMinutes = active.minBreakDurationMinutes;
+      }
+      
       if (active.physicalEducationBufferMinutes !== null && active.physicalEducationBufferMinutes !== undefined) {
         constraints.physicalEducationBufferMinutes = active.physicalEducationBufferMinutes;
       }
@@ -1356,6 +1414,7 @@ export default defineComponent({
         maxTeacherSessionsPerDay: editedFields.maxTeacherSessionsPerDay,
         disableSubjectSpread: editedFields.disableSubjectSpread,
         disableTransitionBuffers: editedFields.disableTransitionBuffers,
+        minBreakDurationMinutes: editedFields.minBreakDurationMinutes,
         physicalEducationBufferMinutes: editedFields.physicalEducationBufferMinutes,
         physicalEducationSubjects: editedFields.physicalEducationSubjects,
         classEarliestStartMinutes: editedFields.classEarliestStartMinutes,
@@ -1497,6 +1556,7 @@ export default defineComponent({
         customConstraints.maxTeacherSessionsPerDay = CONSTRAINT_DEFAULTS.maxTeacherSessionsPerDay;
         customConstraints.disableSubjectSpread = CONSTRAINT_DEFAULTS.disableSubjectSpread;
         customConstraints.disableTransitionBuffers = CONSTRAINT_DEFAULTS.disableTransitionBuffers;
+        customConstraints.minBreakDurationMinutes = CONSTRAINT_DEFAULTS.minBreakDurationMinutes;
         customConstraints.physicalEducationBufferMinutes = CONSTRAINT_DEFAULTS.physicalEducationBufferMinutes;
         customConstraints.physicalEducationSubjects = [...CONSTRAINT_DEFAULTS.physicalEducationSubjects];
         customConstraints.classEarliestStartMinutes = CONSTRAINT_DEFAULTS.classEarliestStartMinutes;
