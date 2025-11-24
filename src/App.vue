@@ -12,6 +12,8 @@
     <HomePage v-if="currentPage === 'home'" />
     <CreatorPage v-else-if="currentPage === 'creator'" />
     <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" :saved-state="viewerPageState" @save-state="handleViewerPageStateSave" />
+    <SchoolSoftLogin v-else-if="currentPage === 'schoolsoft-login'" />
+    <SchoolSoftPreview v-else-if="currentPage === 'schoolsoft-preview'" :initial-data="scrapedData" />
     <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" :custom-constraints="constraintsCustomConstraints" :time-slots="globalTimeSlots" />
   </div>
 </template>
@@ -21,6 +23,8 @@ import { defineComponent, ref, onMounted, onUnmounted, nextTick } from 'vue';
 import HomePage from './components/HomePage.vue';
 import CreatorPage from './components/CreatorPage.vue';
 import ViewerPage from './components/ViewerPage.vue';
+import SchoolSoftLogin from './components/SchoolSoftLogin.vue';
+import SchoolSoftPreview from './components/SchoolSoftPreview.vue';
 import ConstraintsPage from './components/ConstraintsPage.vue';
 
 export default defineComponent({
@@ -29,12 +33,15 @@ export default defineComponent({
     HomePage,
     CreatorPage,
     ViewerPage,
+    SchoolSoftLogin,
+    SchoolSoftPreview,
     ConstraintsPage,
   },
   setup() {
     const currentPage = ref('home');
     const selectedPresetId = ref(null);
     const mockData = ref(null);
+    const scrapedData = ref(null);
     const constraintsSolverOptions = ref(null);
     const constraintsCustomConstraints = ref(null);
     
@@ -145,6 +152,9 @@ export default defineComponent({
         currentPage.value = event.detail.page;
         selectedPresetId.value = event.detail.presetId || null;
         mockData.value = event.detail.mockData || null;
+        if (event.detail.scrapedData) {
+          scrapedData.value = event.detail.scrapedData;
+        }
         
         // Capture solverOptions for constraints page
         if (event.detail.solverOptions) {
@@ -449,6 +459,7 @@ export default defineComponent({
       currentPage,
       selectedPresetId,
       mockData,
+      scrapedData,
       constraintsSolverOptions,
       constraintsCustomConstraints,
       globalCustomConstraints,

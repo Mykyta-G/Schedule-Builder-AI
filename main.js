@@ -17,6 +17,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      webviewTag: true, // Enable <webview> tag
     },
   });
 
@@ -27,7 +28,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   // Initialize database on app start - ensures DB file is created/loaded
   await getDatabase();
-  
+
   createWindow();
 
   app.on('activate', () => {
@@ -50,6 +51,7 @@ ipcMain.handle('list-schedules', () => scheduleHandlers.listSchedules());
 ipcMain.handle('read-schedule', (event, scheduleId) => scheduleHandlers.readSchedule(scheduleId));
 ipcMain.handle('save-schedule', (event, schedule) => scheduleHandlers.saveSchedule(schedule));
 ipcMain.handle('chat', (event, data) => handleChat(data));
+ipcMain.handle('parse-schoolsoft', (event, data) => require('./backend/schoolSoftParser').parseSchoolSoft(data));
 ipcMain.handle('run-solver', async (event, payload) => {
   try {
     return await runScheduleSolver(payload);
@@ -66,11 +68,11 @@ ipcMain.handle('run-solver', async (event, payload) => {
       errorKeys: Object.keys(error),
       errorAllProps: Object.getOwnPropertyNames(error)
     });
-    
+
     // Preserve error details through IPC by including them in the error message
     // Electron IPC serialization may lose custom properties, so embed them in the message
     let errorMessage = error.message || 'Z3 solver reported an error.';
-    
+
     // If the error message is generic, try to get the actual error from properties
     if (errorMessage === 'Z3 solver reported an error.' || errorMessage.includes('Error invoking remote method')) {
       // Prioritize originalError if available
@@ -97,7 +99,7 @@ ipcMain.handle('run-solver', async (event, payload) => {
         }
       }
     }
-    
+
     // Add custom properties to the message if they exist (for additional context)
     const parts = [errorMessage];
     if (error.stderr && error.stderr.trim() && !errorMessage.includes(error.stderr.trim().substring(0, 100))) {
@@ -109,15 +111,15 @@ ipcMain.handle('run-solver', async (event, payload) => {
     if (error.details && error.details !== errorMessage && !errorMessage.includes(error.details)) {
       parts.push(`[details: ${error.details}]`);
     }
-    
+
     const finalMessage = parts.join(' ');
-    
+
     console.error('[Main Process] Z3 Solver Error (enhanced):', {
       originalMessage: error.message,
       finalMessage,
       messageLength: finalMessage.length
     });
-    
+
     // Create a new error with the enhanced message
     const enhancedError = new Error(finalMessage);
     // Try to preserve properties (may not work through IPC, but message will)
@@ -126,7 +128,7 @@ ipcMain.handle('run-solver', async (event, payload) => {
     enhancedError.details = error.details;
     enhancedError.exitCode = error.exitCode;
     enhancedError.rawStdout = error.rawStdout;
-    
+
     throw enhancedError;
   }
 });

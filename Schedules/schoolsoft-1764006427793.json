@@ -1,0 +1,43 @@
+{
+  "id": "schoolsoft-1764006427793",
+  "name": "Imported SchoolSoft Schedule",
+  "createdAt": "2025-11-24T17:47:07.793Z",
+  "updatedAt": "2025-11-24T17:47:07.793Z",
+  "classes": [
+    {
+      "name": "My Class"
+    }
+  ],
+  "teachers": [],
+  "classrooms": [],
+  "subjects": [],
+  "lessonTemplates": [],
+  "timeSlots": [
+    {
+      "day": "Monday",
+      "start": "08:00",
+      "end": "16:00"
+    },
+    {
+      "day": "Tuesday",
+      "start": "08:00",
+      "end": "16:00"
+    },
+    {
+      "day": "Wednesday",
+      "start": "08:00",
+      "end": "16:00"
+    },
+    {
+      "day": "Thursday",
+      "start": "08:00",
+      "end": "16:00"
+    },
+    {
+      "day": "Friday",
+      "start": "08:00",
+      "end": "16:00"
+    }
+  ],
+  "blocks": []
+}

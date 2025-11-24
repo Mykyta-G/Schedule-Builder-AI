@@ -1,0 +1,241 @@
+{
+  "id": "schoolsoft-1764005418263",
+  "name": "Imported Schedule",
+  "description": "",
+  "createdAt": "2025-11-24T17:30:18.263Z",
+  "updatedAt": "2025-11-24T17:30:18.265Z",
+  "blocks": [
+    {
+      "id": "block-1764005418264-0",
+      "title": "8:30-9:50 MJUKVARUDE...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-1",
+      "title": "9:55-11:00 MJUKVARUD...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-2",
+      "title": "11:00-12:00 Lunch...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-3",
+      "title": "12:35-13:55 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-4",
+      "title": "14:00-15:30 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-5",
+      "title": "8:30-9:50 MJUKVARUDE...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-6",
+      "title": "9:55-11:00 MJUKVARUD...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-7",
+      "title": "11:00-12:00 Lunch...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-8",
+      "title": "12:05-13:15 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-9",
+      "title": "13:20-15:30 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-10",
+      "title": "8:30-9:30 MJUKVARUDE...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-11",
+      "title": "9:35-11:00 MJUKVARUD...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-12",
+      "title": "11:00-12:00 Lunch...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-13",
+      "title": "12:00-14:05 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-14",
+      "title": "14:10-15:30 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-15",
+      "title": "8:30-9:50 MJUKVARUDE...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-16",
+      "title": "9:55-11:00 MJUKVARUD...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-17",
+      "title": "11:00-12:00 Lunch...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-18",
+      "title": "12:00-14:05 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-19",
+      "title": "14:10-15:30 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-20",
+      "title": "8:30-9:50 MJUKVARUDE...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-21",
+      "title": "9:55-11:00 MJUKVARUD...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-22",
+      "title": "11:00-12:00 Lunch...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-23",
+      "title": "12:00-14:00 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-24",
+      "title": "8:30-9:50 MJUKVARUDE...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-25",
+      "title": "9:55-11:00 MJUKVARUD...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-26",
+      "title": "11:00-12:00 Lunch...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-27",
+      "title": "12:35-13:55 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    },
+    {
+      "id": "block-1764005418264-28",
+      "title": "14:00-15:30 MJUKVARU...",
+      "room": "Unknown",
+      "teacher": "Unknown",
+      "createdAt": "2025-11-24T17:30:18.265Z",
+      "updatedAt": "2025-11-24T17:30:18.265Z"
+    }
+  ]
+}

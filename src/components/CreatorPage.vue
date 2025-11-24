@@ -119,8 +119,7 @@ export default defineComponent({
     };
 
     const importFromSchoolsoft = () => {
-      // TODO: Implement Schoolsoft import
-      console.log('Import from Schoolsoft clicked');
+      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'schoolsoft-login' } }));
     };
 
     const importFromSkola24 = () => {

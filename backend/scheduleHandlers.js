@@ -14,10 +14,10 @@ async function ensureSchedulesDir() {
 async function exportToJSON(scheduleId) {
   await ensureSchedulesDir();
   const db = await getDatabase();
-  
+
   const result = db.exec('SELECT * FROM schedules WHERE id = ?', [scheduleId]);
   if (!result.length || !result[0].values.length) return null;
-  
+
   const scheduleRow = result[0].values[0];
   const schedule = {
     id: scheduleRow[0],
@@ -26,21 +26,51 @@ async function exportToJSON(scheduleId) {
     createdAt: scheduleRow[3],
     updatedAt: scheduleRow[4]
   };
-  
+
   const blocksResult = db.exec('SELECT * FROM blocks WHERE scheduleId = ? ORDER BY createdAt', [scheduleId]);
   const blocks = blocksResult.length && blocksResult[0].values
     ? blocksResult[0].values.map(row => ({
-        id: row[0],
-        title: row[2] || '',
-        room: row[3] || '',
-        teacher: row[4] || '',
-        createdAt: row[5],
-        updatedAt: row[6]
-      }))
+      id: row[0],
+      title: row[2] || '',
+      room: row[3] || '',
+      teacher: row[4] || '',
+      createdAt: row[5],
+      updatedAt: row[6]
+    }))
     : [];
-  
-  const scheduleData = { ...schedule, blocks };
+
+  const scheduleData = {
+    ...schedule,
+    blocks,
+    // Include extended fields if they exist in the database (we'll need to add columns or store as JSON blob)
+    // For now, we'll rely on the JSON file being the source of truth for complex structures
+    // and the DB for basic metadata and blocks
+  };
+
+  // If we have extended data passed in (not from DB), merge it
+  // This is a bit of a hack, but since we're writing the JSON file here, we can use it
+  // to persist data that doesn't fit in the current DB schema
+
   const filePath = path.join(SCHEDULES_DIR, `${scheduleId}.json`);
+
+  // Check if existing JSON has data we want to preserve
+  try {
+    if (existsSync(filePath)) {
+      const existingContent = await fs.readFile(filePath, 'utf8');
+      const existingData = JSON.parse(existingContent);
+
+      // Preserve extended fields from existing JSON if not present in current object
+      if (!scheduleData.classes && existingData.classes) scheduleData.classes = existingData.classes;
+      if (!scheduleData.teachers && existingData.teachers) scheduleData.teachers = existingData.teachers;
+      if (!scheduleData.classrooms && existingData.classrooms) scheduleData.classrooms = existingData.classrooms;
+      if (!scheduleData.subjects && existingData.subjects) scheduleData.subjects = existingData.subjects;
+      if (!scheduleData.lessonTemplates && existingData.lessonTemplates) scheduleData.lessonTemplates = existingData.lessonTemplates;
+      if (!scheduleData.timeSlots && existingData.timeSlots) scheduleData.timeSlots = existingData.timeSlots;
+    }
+  } catch (e) {
+    // Ignore error reading existing file
+  }
+
   await fs.writeFile(filePath, JSON.stringify(scheduleData, null, 2));
   return filePath;
 }
@@ -52,15 +82,15 @@ async function createSchedule(data) {
     const timestamp = Date.now();
     const id = `schedule-${timestamp}`;
     const now = new Date().toISOString();
-    
+
     db.run(
       'INSERT INTO schedules (id, name, description, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
       [id, data.title || 'Untitled Schedule', data.description || '', now, now]
     );
-    
+
     await saveDatabase();
     await exportToJSON(id);
-    
+
     return { success: true, id, fileName: `${id}.json` };
   } catch (error) {
     console.error('Error creating schedule:', error);
@@ -73,9 +103,9 @@ async function listSchedules() {
     await ensureSchedulesDir();
     const db = await getDatabase();
     const result = db.exec('SELECT id, name, description, createdAt, updatedAt FROM schedules ORDER BY updatedAt DESC');
-    
+
     if (!result.length) return [];
-    
+
     return result[0].values.map(row => ({
       id: row[0],
       name: row[1],
@@ -94,10 +124,10 @@ async function readSchedule(scheduleId) {
   try {
     await ensureSchedulesDir();
     const db = await getDatabase();
-    
+
     const result = db.exec('SELECT * FROM schedules WHERE id = ?', [scheduleId]);
     if (!result.length || !result[0].values.length) return null;
-    
+
     const scheduleRow = result[0].values[0];
     const schedule = {
       id: scheduleRow[0],
@@ -106,19 +136,38 @@ async function readSchedule(scheduleId) {
       createdAt: scheduleRow[3],
       updatedAt: scheduleRow[4]
     };
-    
+
     const blocksResult = db.exec('SELECT * FROM blocks WHERE scheduleId = ? ORDER BY createdAt', [scheduleId]);
     schedule.blocks = blocksResult.length && blocksResult[0].values
       ? blocksResult[0].values.map(row => ({
-          id: row[0],
-          title: row[2] || '',
-          room: row[3] || '',
-          teacher: row[4] || '',
-          createdAt: row[5],
-          updatedAt: row[6]
-        }))
+        id: row[0],
+        title: row[2] || '',
+        room: row[3] || '',
+        teacher: row[4] || '',
+        createdAt: row[5],
+        updatedAt: row[6]
+      }))
       : [];
-    
+
+    // Try to read extended data from JSON file
+    try {
+      const jsonPath = path.join(SCHEDULES_DIR, `${scheduleId}.json`);
+      if (existsSync(jsonPath)) {
+        const jsonContent = await fs.readFile(jsonPath, 'utf8');
+        const jsonData = JSON.parse(jsonContent);
+
+        // Merge extended fields
+        if (jsonData.classes) schedule.classes = jsonData.classes;
+        if (jsonData.teachers) schedule.teachers = jsonData.teachers;
+        if (jsonData.classrooms) schedule.classrooms = jsonData.classrooms;
+        if (jsonData.subjects) schedule.subjects = jsonData.subjects;
+        if (jsonData.lessonTemplates) schedule.lessonTemplates = jsonData.lessonTemplates;
+        if (jsonData.timeSlots) schedule.timeSlots = jsonData.timeSlots;
+      }
+    } catch (e) {
+      console.warn('Could not read extended data from JSON:', e.message);
+    }
+
     return schedule;
   } catch (error) {
     console.error('Error reading schedule:', error);
@@ -132,14 +181,14 @@ async function saveSchedule(schedule) {
     if (!schedule.id) {
       return { success: false, error: 'Schedule ID is required' };
     }
-    
+
     const db = await getDatabase();
     const now = new Date().toISOString();
-    
+
     // Check if schedule exists
     const existing = db.exec('SELECT id FROM schedules WHERE id = ?', [schedule.id]);
     const exists = existing.length > 0 && existing[0].values.length > 0;
-    
+
     if (exists) {
       // Update existing schedule
       db.run(
@@ -153,10 +202,10 @@ async function saveSchedule(schedule) {
         [schedule.id, schedule.name || 'Untitled Schedule', schedule.description || '', schedule.createdAt || now, now]
       );
     }
-    
+
     // Delete existing blocks
     db.run('DELETE FROM blocks WHERE scheduleId = ?', [schedule.id]);
-    
+
     // Insert new blocks
     if (schedule.blocks && Array.isArray(schedule.blocks)) {
       for (const block of schedule.blocks) {
@@ -174,10 +223,19 @@ async function saveSchedule(schedule) {
         );
       }
     }
-    
+
     await saveDatabase();
-    await exportToJSON(schedule.id);
-    
+    await saveDatabase();
+
+    // For exportToJSON, we need to pass the full schedule object to preserve extended fields
+    // Since exportToJSON reads from DB, we need to manually write the JSON file with all fields
+    // instead of calling exportToJSON which would only write DB fields
+
+    // await exportToJSON(schedule.id); // Replaced with direct write below
+
+    const filePath = path.join(SCHEDULES_DIR, `${schedule.id}.json`);
+    await fs.writeFile(filePath, JSON.stringify(schedule, null, 2));
+
     return { success: true };
   } catch (error) {
     console.error('Error saving schedule:', error);

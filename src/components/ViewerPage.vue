@@ -455,6 +455,21 @@ export default defineComponent({
       buildSuccess.value = false;
     };
 
+    // Helper to parse time string "HH:MM" to minutes
+    const parseTimeToMinutes = (timeString) => {
+      try {
+        if (!timeString) return null;
+        const [hours, minutes] = timeString.split(':').map(Number);
+        if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+          return null;
+        }
+        return hours * 60 + minutes;
+      } catch (error) {
+        console.error('[ViewerPage] Error parsing time', { timeString, error });
+        return null;
+      }
+    };
+
     const applyInitialData = (data) => {
       if (!data || typeof data !== 'object') {
         return;
@@ -602,8 +617,43 @@ export default defineComponent({
         }));
       }
 
-      isCreatorMode.value = true;
-      resetSolverState();
+      // Handle pre-calculated blocks (e.g. from SchoolSoft import)
+      if (data.blocks && Array.isArray(data.blocks) && data.blocks.length > 0) {
+        console.log('[ViewerPage] Found imported blocks, populating schedule view', { count: data.blocks.length });
+        const scheduleByDay = {};
+        
+        data.blocks.forEach(block => {
+          const day = block.day || 'Monday';
+          if (!scheduleByDay[day]) {
+            scheduleByDay[day] = [];
+          }
+          
+          const startMinutes = parseTimeToMinutes(block.startTime || block.start || '08:00');
+          const endMinutes = parseTimeToMinutes(block.endTime || block.end || '09:00');
+          const duration = (endMinutes !== null && startMinutes !== null) ? (endMinutes - startMinutes) : 60;
+          
+          scheduleByDay[day].push({
+            id: block.id,
+            name: block.title || block.subject || 'Lesson',
+            subject: block.title || block.subject || 'Lesson',
+            classRef: block.class || 'My Class',
+            teacher: block.teacher || '',
+            classroom: block.room || '',
+            startMinutes: startMinutes !== null ? startMinutes : 480,
+            duration: duration,
+            colorIndex: Math.floor(Math.random() * 10) // Assign a random color
+          });
+        });
+        
+        generatedSchedule.value = normalizeScheduleResult(scheduleByDay);
+        schedule.value = generatedSchedule.value;
+        isCreatorMode.value = false;
+        buildSuccess.value = true;
+      } else {
+        isCreatorMode.value = true;
+        resetSolverState();
+      }
+      
       selectedClassFilter.value = 'All Classes';
     };
 
@@ -765,19 +815,8 @@ export default defineComponent({
         .filter((slot) => slot.start && slot.end);
     };
     
-    // Helper to parse time string "HH:MM" to minutes
-    const parseTimeToMinutes = (timeString) => {
-      try {
-        const [hours, minutes] = timeString.split(':').map(Number);
-        if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-          return null;
-        }
-        return hours * 60 + minutes;
-      } catch (error) {
-        console.error('[ViewerPage] Error parsing time', { timeString, error });
-        return null;
-      }
-    };
+    // parseTimeToMinutes moved up
+
 
     // Validate time slots for solver - enforce exactly 5 weekdays
     const validateTimeSlotsForSolver = (timeSlots) => {
@@ -2453,6 +2492,35 @@ export default defineComponent({
     };
     
     // Restore state from saved state
+    const loadSchedule = async (id) => {
+      if (!id) return;
+      
+      try {
+        logInfo('LOAD_SCHEDULE_START', { presetId: id });
+        const scheduleData = await window.api.readSchedule(id);
+        
+        if (scheduleData) {
+          logInfo('LOAD_SCHEDULE_SUCCESS', { presetId: id });
+          applyInitialData(scheduleData);
+          // Ensure we switch to creator mode to show the data form
+          isCreatorMode.value = true;
+        } else {
+          logError('LOAD_SCHEDULE_EMPTY', null, { presetId: id });
+        }
+      } catch (error) {
+        logError('LOAD_SCHEDULE_ERROR', error, { presetId: id });
+      }
+    };
+
+    watch(
+      () => props.presetId,
+      (newId) => {
+        if (newId && !props.initialData && !isRestoringState.value) {
+           loadSchedule(newId);
+        }
+      }
+    );
+
     const restoreState = async () => {
       if (!props.savedState || props.savedState.presetId !== props.presetId) {
         logStateRestore('RESTORE_STATE_SKIP', {
@@ -2630,6 +2698,12 @@ export default defineComponent({
           constraintsCount: Object.keys(customConstraints.value || {}).length,
           presetId: props.presetId
         });
+      }
+
+      // Load schedule if presetId is provided and we don't have initialData or savedState
+      // This ensures that when navigating from SchoolSoft import, we actually load the data
+      if (props.presetId && !props.initialData && (!props.savedState || props.savedState.presetId !== props.presetId)) {
+        loadSchedule(props.presetId);
       }
     });
 
