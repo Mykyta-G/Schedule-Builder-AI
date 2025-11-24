@@ -39,6 +39,7 @@
             <div class="import-section">
               <h3 class="section-title">Import Data</h3>
               <div class="import-buttons">
+                <!-- SchoolSoft import -->
                 <button class="import-btn schoolsoft-btn" @click="importFromSchoolsoft">
                   <div class="btn-content">
                     <img :src="schoolsoftIcon" alt="Schoolsoft" class="btn-icon" />
@@ -948,7 +949,65 @@ export default defineComponent({
     };
 
     const importFromSchoolsoft = () => {
-      console.log('Import from Schoolsoft clicked');
+      window.dispatchEvent(new CustomEvent('navigate', { 
+        detail: { 
+          page: 'schoolsoft-login'
+        } 
+      }));
+    };
+
+    const loadFromFile = async () => {
+      try {
+        // Get list of schedules
+        if (!window.api || !window.api.listSchedules) {
+          alert('Schedule API not available');
+          return;
+        }
+
+        const scheduleList = await window.api.listSchedules();
+        
+        if (!scheduleList || scheduleList.length === 0) {
+          alert('No saved schedules found');
+          return;
+        }
+
+        // Show a simple selection dialog
+        const scheduleNames = scheduleList.map((s, i) => `${i + 1}. ${s.name} (ID: ${s.id})`).join('\n');
+        const selection = prompt(`Select a schedule to load:\n\n${scheduleNames}\n\nEnter the number (1-${scheduleList.length}):`);
+        
+        if (!selection) return;
+        
+        const index = parseInt(selection) - 1;
+        if (index < 0 || index >= scheduleList.length) {
+          alert('Invalid selection');
+          return;
+        }
+
+        const selectedSchedule = scheduleList[index];
+        
+        // Load the schedule
+        const scheduleData = await window.api.readSchedule(selectedSchedule.id);
+        
+        if (scheduleData) {
+          console.log('[ViewerPage] Loading schedule from file', {
+            id: selectedSchedule.id,
+            name: selectedSchedule.name,
+            hasTerm: !!scheduleData.term,
+            hasClasses: !!scheduleData.classes,
+            hasBlocks: !!scheduleData.blocks
+          });
+          
+          // Apply the loaded data
+          applyInitialData(scheduleData);
+          
+          alert(`Loaded: ${selectedSchedule.name}`);
+        } else {
+          alert('Failed to load schedule');
+        }
+      } catch (error) {
+        console.error('Error loading schedule:', error);
+        alert('Error loading schedule: ' + error.message);
+      }
     };
 
     const importFromSkola24 = () => {
@@ -3072,7 +3131,23 @@ export default defineComponent({
 }
 
 .skola24-btn:hover .btn-title {
-  color: #48bb78;
+  color: #d97706;
+}
+
+.load-file-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.load-file-btn:hover {
+  box-shadow: 0 1.2vh 2.4vh rgba(16, 185, 129, 0.3), 0 0.6vh 1.2vh rgba(16, 185, 129, 0.2);
+}
+
+.load-file-btn .btn-icon {
+  font-size: 3.5vh;
+}
+
+.load-file-btn:hover .btn-title {
+  color: #047857;
 }
 
 .divider {

@@ -151,7 +151,8 @@ export default defineComponent({
         const previousPage = currentPage.value;
         currentPage.value = event.detail.page;
         selectedPresetId.value = event.detail.presetId || null;
-        mockData.value = event.detail.mockData || null;
+        // Capture scheduleData from SchoolSoft import OR mockData from other sources
+        mockData.value = event.detail.scheduleData || event.detail.mockData || null;
         if (event.detail.scrapedData) {
           scrapedData.value = event.detail.scrapedData;
         }

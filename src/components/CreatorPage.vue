@@ -65,32 +65,6 @@
               </div>
             </div>
           </div>
-
-          <div class="divider">
-            <span class="divider-text">OR</span>
-          </div>
-
-          <div class="import-options">
-            <button class="import-btn schoolsoft-btn" @click="importFromSchoolsoft">
-              <div class="btn-content">
-                <img :src="schoolsoftIcon" alt="Schoolsoft" class="btn-icon" />
-                <div class="btn-text-group">
-                  <span class="btn-title">Import from Schoolsoft</span>
-                  <span class="btn-description">Import data from Schoolsoft</span>
-                </div>
-              </div>
-            </button>
-            
-            <button class="import-btn skola24-btn" @click="importFromSkola24">
-              <div class="btn-content">
-                <img :src="skola24Icon" alt="Skola24" class="btn-icon" />
-                <div class="btn-text-group">
-                  <span class="btn-title">Import from Skola24</span>
-                  <span class="btn-description">Import data from Skola24</span>
-                </div>
-              </div>
-            </button>
-          </div>
         </div>
       </div>
     </div>

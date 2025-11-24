@@ -192,10 +192,12 @@ export default defineComponent({
             if (window.api.saveSchedule) {
               await window.api.saveSchedule(newSchedule);
               
+              // Navigate to viewer and pass the schedule data so it's immediately available
               window.dispatchEvent(new CustomEvent('navigate', { 
                 detail: { 
                   page: 'viewer',
-                  presetId: newSchedule.id
+                  presetId: newSchedule.id,
+                  scheduleData: newSchedule // Pass the schedule data so ViewerPage can load it
                 } 
               }));
             }
