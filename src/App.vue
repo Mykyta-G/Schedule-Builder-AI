@@ -547,7 +547,8 @@ html {
 .creator-page,
 .viewer-page,
 .preset-selection-page,
-.constraints-page {
+.constraints-page,
+.schoolsoft-login {
   position: relative;
   z-index: 1;
   background: transparent;

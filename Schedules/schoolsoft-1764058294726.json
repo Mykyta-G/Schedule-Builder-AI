@@ -1,0 +1,417 @@
+{
+  "id": "schoolsoft-1764058294726",
+  "name": "Imported SchoolSoft Schedule",
+  "createdAt": "2025-11-25T08:11:34.726Z",
+  "updatedAt": "2025-11-25T08:11:34.726Z",
+  "classes": [
+    {
+      "name": "TE4"
+    }
+  ],
+  "teachers": [
+    {
+      "name": "JN"
+    },
+    {
+      "name": "LWA"
+    },
+    {
+      "name": "VK"
+    }
+  ],
+  "classrooms": [
+    {
+      "name": "TE4"
+    }
+  ],
+  "subjects": [
+    {
+      "name": "MJUKVARUDESIGN"
+    },
+    {
+      "name": "Lunch"
+    },
+    {
+      "name": "MJUKVARUDESIGN TE4"
+    }
+  ],
+  "lessonTemplates": [
+    {
+      "subject": "MJUKVARUDESIGN",
+      "class": "TE4",
+      "teacher": "JN",
+      "preferredRoom": "TE4",
+      "sessionsPerWeek": 4,
+      "durationMinutes": 80
+    },
+    {
+      "subject": "MJUKVARUDESIGN",
+      "class": "TE4",
+      "teacher": "",
+      "preferredRoom": "TE4",
+      "sessionsPerWeek": 11,
+      "durationMinutes": 97
+    },
+    {
+      "subject": "Lunch",
+      "class": "TE4",
+      "teacher": "",
+      "preferredRoom": "",
+      "sessionsPerWeek": 6,
+      "durationMinutes": 60
+    },
+    {
+      "subject": "MJUKVARUDESIGN",
+      "class": "TE4",
+      "teacher": "LWA",
+      "preferredRoom": "TE4",
+      "sessionsPerWeek": 2,
+      "durationMinutes": 70
+    },
+    {
+      "subject": "MJUKVARUDESIGN",
+      "class": "TE4",
+      "teacher": "VK",
+      "preferredRoom": "TE4",
+      "sessionsPerWeek": 4,
+      "durationMinutes": 75
+    },
+    {
+      "subject": "MJUKVARUDESIGN TE4",
+      "class": "TE4",
+      "teacher": "",
+      "preferredRoom": "",
+      "sessionsPerWeek": 2,
+      "durationMinutes": 73
+    }
+  ],
+  "timeSlots": [
+    {
+      "day": "Monday",
+      "start": "08:00",
+      "end": "17:00"
+    },
+    {
+      "day": "Tuesday",
+      "start": "08:00",
+      "end": "17:00"
+    },
+    {
+      "day": "Wednesday",
+      "start": "08:00",
+      "end": "17:00"
+    },
+    {
+      "day": "Thursday",
+      "start": "08:00",
+      "end": "17:00"
+    },
+    {
+      "day": "Friday",
+      "start": "08:00",
+      "end": "17:00"
+    }
+  ],
+  "term": {
+    "name": "Imported Term",
+    "startDate": "2025-11-25",
+    "endDate": "2026-05-24",
+    "weeks": 26,
+    "days": [
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday"
+    ],
+    "dailySlots": [
+      {
+        "start": "08:00",
+        "end": "09:00"
+      },
+      {
+        "start": "09:15",
+        "end": "10:15"
+      },
+      {
+        "start": "10:30",
+        "end": "11:30"
+      },
+      {
+        "start": "11:45",
+        "end": "12:45"
+      },
+      {
+        "start": "13:00",
+        "end": "14:00"
+      },
+      {
+        "start": "14:15",
+        "end": "15:15"
+      }
+    ]
+  },
+  "blocks": [
+    {
+      "id": "block-1764058294726-0",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "JN",
+      "startTime": "8:30",
+      "endTime": "9:50",
+      "day": "Monday"
+    },
+    {
+      "id": "block-1764058294726-1",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "9:55",
+      "endTime": "11:00",
+      "day": "Monday"
+    },
+    {
+      "id": "block-1764058294726-2",
+      "title": "Lunch",
+      "room": "",
+      "teacher": "",
+      "startTime": "11:00",
+      "endTime": "12:00",
+      "day": "Monday"
+    },
+    {
+      "id": "block-1764058294726-3",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "LWA",
+      "startTime": "12:35",
+      "endTime": "13:55",
+      "day": "Monday"
+    },
+    {
+      "id": "block-1764058294726-4",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "14:00",
+      "endTime": "15:30",
+      "day": "Monday"
+    },
+    {
+      "id": "block-1764058294726-5",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "VK",
+      "startTime": "8:30",
+      "endTime": "9:50",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-6",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "9:55",
+      "endTime": "11:00",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-7",
+      "title": "Lunch",
+      "room": "",
+      "teacher": "",
+      "startTime": "11:00",
+      "endTime": "12:00",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-8",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "VK",
+      "startTime": "12:05",
+      "endTime": "13:15",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-9",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "13:20",
+      "endTime": "15:30",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-10",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "LWA",
+      "startTime": "8:30",
+      "endTime": "9:30",
+      "day": "Wednesday"
+    },
+    {
+      "id": "block-1764058294726-11",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "9:35",
+      "endTime": "11:00",
+      "day": "Wednesday"
+    },
+    {
+      "id": "block-1764058294726-12",
+      "title": "Lunch",
+      "room": "",
+      "teacher": "",
+      "startTime": "11:00",
+      "endTime": "12:00",
+      "day": "Wednesday"
+    },
+    {
+      "id": "block-1764058294726-13",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "12:00",
+      "endTime": "14:05",
+      "day": "Wednesday"
+    },
+    {
+      "id": "block-1764058294726-14",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "JN",
+      "startTime": "14:10",
+      "endTime": "15:30",
+      "day": "Wednesday"
+    },
+    {
+      "id": "block-1764058294726-15",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "VK",
+      "startTime": "8:30",
+      "endTime": "9:50",
+      "day": "Thursday"
+    },
+    {
+      "id": "block-1764058294726-16",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "9:55",
+      "endTime": "11:00",
+      "day": "Thursday"
+    },
+    {
+      "id": "block-1764058294726-17",
+      "title": "Lunch",
+      "room": "",
+      "teacher": "",
+      "startTime": "11:00",
+      "endTime": "12:00",
+      "day": "Thursday"
+    },
+    {
+      "id": "block-1764058294726-18",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "12:00",
+      "endTime": "14:05",
+      "day": "Thursday"
+    },
+    {
+      "id": "block-1764058294726-19",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "JN",
+      "startTime": "14:10",
+      "endTime": "15:30",
+      "day": "Thursday"
+    },
+    {
+      "id": "block-1764058294726-20",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "JN",
+      "startTime": "8:30",
+      "endTime": "9:50",
+      "day": "Friday"
+    },
+    {
+      "id": "block-1764058294726-21",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "9:55",
+      "endTime": "11:00",
+      "day": "Friday"
+    },
+    {
+      "id": "block-1764058294726-22",
+      "title": "Lunch",
+      "room": "",
+      "teacher": "",
+      "startTime": "11:00",
+      "endTime": "12:00",
+      "day": "Friday"
+    },
+    {
+      "id": "block-1764058294726-23",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "12:00",
+      "endTime": "14:00",
+      "day": "Friday"
+    },
+    {
+      "id": "block-1764058294726-24",
+      "title": "MJUKVARUDESIGN TE4",
+      "room": "",
+      "teacher": "",
+      "startTime": "8:30",
+      "endTime": "9:50",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-25",
+      "title": "MJUKVARUDESIGN TE4",
+      "room": "",
+      "teacher": "",
+      "startTime": "9:55",
+      "endTime": "11:00",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-26",
+      "title": "Lunch",
+      "room": "",
+      "teacher": "",
+      "startTime": "11:00",
+      "endTime": "12:00",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-27",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "VK",
+      "startTime": "12:05",
+      "endTime": "13:15",
+      "day": "Tuesday"
+    },
+    {
+      "id": "block-1764058294726-28",
+      "title": "MJUKVARUDESIGN",
+      "room": "TE4",
+      "teacher": "",
+      "startTime": "13:20",
+      "endTime": "15:30",
+      "day": "Tuesday"
+    }
+  ]
+}

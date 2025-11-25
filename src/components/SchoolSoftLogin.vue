@@ -1,48 +1,78 @@
 <template>
   <div class="schoolsoft-login">
-    <div class="top-nav">
-      <a href="#" @click.prevent="goBack" class="back-link">← Exit</a>
+    <!-- School Selector Page (shown when on welcome page) -->
+    <div v-if="showSchoolSelector" class="school-selector-page">
+      <div class="top-nav">
+        <a href="#" @click.prevent="goBack" class="back-link">← Back</a>
+      </div>
       
-      <div class="browser-controls">
-        <button @click="navBack" class="nav-btn" title="Back">←</button>
-        <button @click="navForward" class="nav-btn" title="Forward">→</button>
-        <button @click="reload" class="nav-btn" title="Reload">↻</button>
-        <form @submit.prevent="navigateToUrl" class="url-form">
-          <input 
-            v-model="currentUrl" 
-            type="text" 
-            class="url-input"
-            placeholder="Enter school URL (e.g. https://sms.schoolsoft.se/engelska)"
-          />
-          <button type="submit" class="go-btn">Go</button>
-        </form>
+      <div class="content-container">
+        <div class="hero-section">
+          <h1 class="page-title">Connect to SchoolSoft</h1>
+          <p class="page-description">Enter your school's name to access your schedule</p>
+          
+          <form @submit.prevent="handleSchoolSubmit" class="school-form">
+            <div class="input-wrapper">
+              <input 
+                v-model="schoolName" 
+                type="text" 
+                class="school-input"
+                placeholder="e.g., nti"
+                autofocus
+              />
+              <button type="submit" class="submit-btn" :disabled="!schoolName.trim()">
+                <span class="btn-icon">→</span>
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
-    
-    <div class="webview-container">
-      <webview 
-        ref="webview" 
-        :src="initialUrl" 
-        class="webview"
-        allowpopups
-        @did-navigate="handleDidNavigate"
-        @did-navigate-in-page="handleDidNavigate"
-      ></webview>
 
-      <!-- Floating Action Button for Import -->
-      <button class="fab-import-btn" @click="triggerImport" :disabled="isImporting">
-        <div class="fab-content">
-          <span class="fab-icon">⬇️</span>
-          <span class="fab-text" v-if="!isImporting">IMPORT SCHEDULE</span>
-          <span class="fab-text" v-else>IMPORTING...</span>
+    <!-- Webview Interface (always rendered, shown after school selection) -->
+    <div v-show="!showSchoolSelector" class="webview-interface">
+      <div class="top-nav">
+        <a href="#" @click.prevent="goBack" class="back-link">← Exit</a>
+        
+        <div v-if="!isLoggedIn" class="browser-controls">
+          <button @click="navBack" class="nav-btn" title="Back">←</button>
+          <button @click="navForward" class="nav-btn" title="Forward">→</button>
+          <button @click="reload" class="nav-btn" title="Reload">↻</button>
         </div>
-      </button>
+      </div>
+      
+      <div class="webview-container">
+        <webview 
+          ref="webview" 
+          :src="currentUrl" 
+          class="webview"
+          :class="{ 'webview-hidden': isLoggedIn }"
+          allowpopups
+          @did-navigate="handleDidNavigate"
+          @did-navigate-in-page="handleDidNavigate"
+          @did-finish-load="handlePageLoad"
+        ></webview>
+
+        <!-- Full-page overlay when logged in -->
+        <div v-if="isLoggedIn" class="login-overlay">
+          <div class="overlay-content">
+            <div class="overlay-hero">
+              <h1 class="overlay-title">Ready to Import</h1>
+              <p class="overlay-description">Your SchoolSoft schedule is ready to be imported into Schedule Builder AI</p>
+            </div>
+            <button class="overlay-import-btn" @click="triggerImport" :disabled="isImporting">
+              <span class="btn-text">Import Schedule</span>
+              <span class="btn-icon">⬇️</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import { defineComponent, ref, onMounted } from 'vue';
+import { defineComponent, ref, onMounted, nextTick } from 'vue';
 
 export default defineComponent({
   name: 'SchoolSoftLogin',
@@ -51,6 +81,9 @@ export default defineComponent({
     const isImporting = ref(false);
     const initialUrl = 'https://sms.schoolsoft.se/';
     const currentUrl = ref(initialUrl);
+    const schoolName = ref('');
+    const showSchoolSelector = ref(true);
+    const isLoggedIn = ref(false);
 
     const goBack = () => {
       window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
@@ -74,18 +107,158 @@ export default defineComponent({
       }
     };
 
-    const navigateToUrl = () => {
-      if (webview.value && currentUrl.value) {
-        let url = currentUrl.value;
-        if (!url.startsWith('http')) {
-          url = 'https://' + url;
+    // Smart URL detection and construction
+    const constructSchoolUrl = (input) => {
+      if (!input || !input.trim()) {
+        return null;
+      }
+
+      const trimmed = input.trim();
+
+      // Check if it's already a full URL
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        return trimmed;
+      }
+
+      // Check if it contains domain-like patterns (e.g., .se/, .com/, etc.)
+      if (trimmed.includes('.se/') || trimmed.includes('.com/') || trimmed.includes('.net/') || trimmed.includes('://')) {
+        // If it doesn't start with http, add https://
+        if (!trimmed.startsWith('http')) {
+          return 'https://' + trimmed;
         }
-        webview.value.loadURL(url);
+        return trimmed;
+      }
+
+      // Otherwise, treat it as a school name and construct the URL
+      // Remove leading/trailing slashes and encode special characters
+      const cleanSchoolName = trimmed.replace(/^\/+|\/+$/g, '').replace(/\s+/g, '');
+      if (!cleanSchoolName) {
+        return null;
+      }
+
+      // URL encode the school name to handle special characters
+      const encodedSchoolName = encodeURIComponent(cleanSchoolName);
+      return `https://sms.schoolsoft.se/${encodedSchoolName}`;
+    };
+
+
+    const handleSchoolSubmit = async () => {
+      if (!schoolName.value || !schoolName.value.trim()) {
+        return;
+      }
+
+      const url = constructSchoolUrl(schoolName.value);
+      if (url) {
+        currentUrl.value = url;
+        showSchoolSelector.value = false;
+        
+        // Wait for Vue to update DOM and webview to be ready
+        await nextTick();
+        setTimeout(() => {
+          if (webview.value) {
+            try {
+              webview.value.loadURL(url);
+            } catch (error) {
+              console.error('Failed to load URL:', error);
+            }
+          }
+        }, 200);
       }
     };
 
-    const handleDidNavigate = (event) => {
+    // Check if URL indicates user is logged in (not on login pages)
+    const checkLoginState = (url) => {
+      if (!url || !url.includes('sms.schoolsoft.se/')) {
+        return false;
+      }
+
+      // Check if we're on the welcome page
+      const baseUrl = 'https://sms.schoolsoft.se';
+      const normalizedUrl = url.replace(/\/$/, '');
+      const isWelcomePage = normalizedUrl === baseUrl || normalizedUrl === baseUrl + '/';
+      
+      if (isWelcomePage) {
+        return false;
+      }
+
+      // Check if we're on login pages
+      const loginPatterns = [
+        '/samlLogin.jsp',
+        '/login',
+        '/Login',
+        '/logga-in',
+        '/inloggning',
+        'usertype=',
+        'ajaxlogin='
+      ];
+      
+      const isLoginPage = loginPatterns.some(pattern => url.includes(pattern));
+      
+      // If not a login page and on a school's domain, assume logged in
+      // We'll verify by checking page content
+      return !isLoginPage;
+    };
+
+    // Check page content to verify login state
+    const verifyLoginState = async () => {
+      if (!webview.value) return false;
+      
+      try {
+        // Check if schedule elements exist on the page
+        const hasSchedule = await webview.value.executeJavaScript(`
+          (function() {
+            const lessons = document.querySelectorAll('.cal-lesson');
+            return lessons.length > 0;
+          })();
+        `);
+        
+        return hasSchedule;
+      } catch (error) {
+        console.error('Error checking login state:', error);
+        return false;
+      }
+    };
+
+    const handleDidNavigate = async (event) => {
       currentUrl.value = event.url;
+      
+      // Check if we're on the welcome page (base URL with no school identifier)
+      const baseUrl = 'https://sms.schoolsoft.se';
+      const normalizedUrl = event.url.replace(/\/$/, ''); // Remove trailing slash
+      const isWelcomePage = normalizedUrl === baseUrl || normalizedUrl === baseUrl + '/';
+      
+      if (isWelcomePage) {
+        // Still on welcome page, show school selector
+        showSchoolSelector.value = true;
+        isLoggedIn.value = false;
+      } else if (event.url.includes('sms.schoolsoft.se/')) {
+        // Navigated to a school's page, hide selector and show webview
+        showSchoolSelector.value = false;
+        // Reset login state - will be checked when page loads
+        isLoggedIn.value = false;
+      }
+    };
+
+    const handlePageLoad = async () => {
+      if (!webview.value) return;
+      
+      const url = webview.value.getURL();
+      if (!url || !url.includes('sms.schoolsoft.se/')) {
+        isLoggedIn.value = false;
+        return;
+      }
+
+      // Check login state after page loads
+      const urlIndicatesLogin = checkLoginState(url);
+      if (urlIndicatesLogin) {
+        // Verify by checking page content
+        setTimeout(async () => {
+          const verified = await verifyLoginState();
+          isLoggedIn.value = verified;
+        }, 500);
+      } else {
+        isLoggedIn.value = false;
+      }
     };
 
     const triggerImport = async () => {
@@ -215,11 +388,14 @@ export default defineComponent({
     };
 
     onMounted(() => {
-      const wv = webview.value;
-      if (wv) {
-        wv.addEventListener('did-navigate', handleDidNavigate);
-        wv.addEventListener('did-navigate-in-page', handleDidNavigate);
-      }
+      // Wait for webview to be ready
+      setTimeout(() => {
+        const wv = webview.value;
+        if (wv) {
+          wv.addEventListener('did-navigate', handleDidNavigate);
+          wv.addEventListener('did-navigate-in-page', handleDidNavigate);
+        }
+      }, 200);
     });
 
     return {
@@ -227,13 +403,17 @@ export default defineComponent({
       isImporting,
       initialUrl,
       currentUrl,
+      schoolName,
+      showSchoolSelector,
       goBack,
       navBack,
       navForward,
       reload,
-      navigateToUrl,
       handleDidNavigate,
-      triggerImport
+      handlePageLoad,
+      handleSchoolSubmit,
+      triggerImport,
+      isLoggedIn
     };
   }
 });
@@ -244,17 +424,28 @@ export default defineComponent({
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: transparent;
+  position: relative;
+  z-index: 1;
+}
+
+/* School Selector Page */
+.school-selector-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: transparent;
+  position: relative;
+  z-index: 1;
 }
 
 .top-nav {
-  padding: 1vh 2vh;
-  border-bottom: 1px solid #e2e8f0;
+  padding: 2vh 3vh;
   display: flex;
   align-items: center;
-  gap: 2vh;
-  background: #f8f9fa;
   z-index: 10;
+  position: relative;
 }
 
 .back-link {
@@ -263,6 +454,150 @@ export default defineComponent({
   font-weight: 500;
   font-size: 1.6vh;
   white-space: nowrap;
+  transition: color 0.2s ease;
+}
+
+.back-link:hover {
+  color: #764ba2;
+}
+
+.content-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-section {
+  text-align: center;
+  max-width: 90vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.page-title {
+  font-size: 6.5vh;
+  font-weight: 700;
+  color: #2d3748;
+  margin: 0 0 3vh 0;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.page-description {
+  font-size: 2.2vh;
+  color: #718096;
+  margin: 0 0 6vh 0;
+  line-height: 1.7;
+  max-width: 70vh;
+  text-align: center;
+}
+
+.school-form {
+  width: 100%;
+  max-width: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.input-wrapper {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1vh;
+  background: white;
+  border-radius: 1.5vh;
+  padding: 0.5vh;
+  box-shadow: 0 0.5vh 2vh rgba(102, 126, 234, 0.2);
+  transition: all 0.3s ease;
+}
+
+.input-wrapper:focus-within {
+  box-shadow: 0 0.8vh 3vh rgba(102, 126, 234, 0.35);
+  transform: translateY(-0.2vh);
+}
+
+.school-input {
+  flex: 1;
+  padding: 2.5vh 3vh;
+  border: none;
+  outline: none;
+  font-size: 2.2vh;
+  color: #2d3748;
+  background: transparent;
+  font-weight: 500;
+  line-height: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.school-input::placeholder {
+  color: #cbd5e0;
+  font-weight: 400;
+}
+
+.submit-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 1.2vh;
+  padding: 0 3vh;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 6vh;
+  height: 5.5vh;
+  flex-shrink: 0;
+  box-shadow: 0 0.3vh 1vh rgba(102, 126, 234, 0.3);
+}
+
+.submit-btn:hover:not(:disabled) {
+  transform: scale(1.05);
+  box-shadow: 0 0.5vh 1.5vh rgba(102, 126, 234, 0.4);
+}
+
+.submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-icon {
+  color: white;
+  font-size: 2.5vh;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Webview Interface */
+.webview-interface {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.webview-interface .top-nav {
+  padding: 1vh 2vh;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 2vh;
+  background: #f8f9fa;
+  z-index: 10;
 }
 
 .browser-controls {
@@ -286,41 +621,6 @@ export default defineComponent({
   background: #edf2f7;
 }
 
-.url-form {
-  flex: 1;
-  display: flex;
-  gap: 1vh;
-}
-
-.url-input {
-  flex: 1;
-  padding: 0.8vh 1.5vh;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.5vh;
-  font-size: 1.4vh;
-  color: #2d3748;
-  background: #fff;
-}
-
-.url-input:focus {
-  outline: none;
-  border-color: #667eea;
-}
-
-.go-btn {
-  background: #667eea;
-  color: white;
-  border: none;
-  border-radius: 0.5vh;
-  padding: 0 2vh;
-  font-size: 1.4vh;
-  cursor: pointer;
-}
-
-.go-btn:hover {
-  background: #5a67d8;
-}
-
 .webview-container {
   flex: 1;
   position: relative;
@@ -331,47 +631,115 @@ export default defineComponent({
   width: 100%;
   height: 100%;
   border: none;
+  transition: opacity 0.3s ease;
 }
 
-.fab-import-btn {
+.webview-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Login Overlay */
+.login-overlay {
   position: absolute;
-  bottom: 4vh;
-  right: 4vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  padding: 2vh 4vh;
-  border-radius: 4vh;
-  cursor: pointer;
-  box-shadow: 0 0.5vh 2vh rgba(102, 126, 234, 0.4);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 100;
-}
-
-.fab-import-btn:hover:not(:disabled) {
-  transform: translateY(-0.5vh) scale(1.05);
-  box-shadow: 0 1vh 3vh rgba(102, 126, 234, 0.5);
-}
-
-.fab-import-btn:disabled {
-  opacity: 0.8;
-  cursor: wait;
-  transform: scale(0.95);
-}
-
-.fab-content {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: transparent;
   display: flex;
   align-items: center;
-  gap: 1.5vh;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeInUp 0.4s ease-out;
 }
 
-.fab-icon {
-  font-size: 2.5vh;
+.overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  max-width: 90vh;
+  width: 100%;
+  text-align: center;
 }
 
-.fab-text {
-  font-size: 1.8vh;
+.overlay-hero {
+  margin-bottom: 6vh;
+  animation: fadeInUp 0.5s ease-out 0.1s both;
+}
+
+.overlay-title {
+  font-size: 6.5vh;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  color: #2d3748;
+  margin: 0 0 3vh 0;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.overlay-description {
+  font-size: 2.2vh;
+  color: #718096;
+  margin: 0;
+  line-height: 1.7;
+  max-width: 70vh;
+  text-align: center;
+}
+
+.overlay-import-btn {
+  padding: 3.5vh 8vh;
+  border: none;
+  border-radius: 1.5vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 2.2vh;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  box-shadow: 0 0.5vh 2vh rgba(102, 126, 234, 0.35);
+  margin: 0 auto;
+  animation: fadeInUp 0.5s ease-out 0.2s both;
+}
+
+.overlay-import-btn:hover:not(:disabled) {
+  transform: translateY(-0.3vh);
+  box-shadow: 0 0.8vh 3vh rgba(102, 126, 234, 0.45);
+}
+
+.overlay-import-btn:active:not(:disabled) {
+  transform: translateY(-0.1vh);
+}
+
+.overlay-import-btn:disabled {
+  opacity: 0.8;
+  cursor: wait;
+  transform: none;
+}
+
+.overlay-import-btn .btn-icon {
+  font-size: 3.5vh;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.overlay-import-btn .btn-text {
+  font-size: 2.2vh;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(3vh);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>
