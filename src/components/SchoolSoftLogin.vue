@@ -665,7 +665,14 @@ export default defineComponent({
 }
 
 .overlay-hero {
-  margin-bottom: 6vh;
+  text-align: center;
+  max-width: 90vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 6vh 0;
   animation: fadeInUp 0.5s ease-out 0.1s both;
 }
 
