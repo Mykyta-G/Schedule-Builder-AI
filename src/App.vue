@@ -10,7 +10,6 @@
       ></div>
     </div>
     <HomePage v-if="currentPage === 'home'" />
-    <CreatorPage v-else-if="currentPage === 'creator'" />
     <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" :saved-state="viewerPageState" @save-state="handleViewerPageStateSave" />
     <SchoolSoftLogin v-else-if="currentPage === 'schoolsoft-login'" />
     <SchoolSoftPreview v-else-if="currentPage === 'schoolsoft-preview'" :initial-data="scrapedData" />
@@ -21,7 +20,6 @@
 <script>
 import { defineComponent, ref, onMounted, onUnmounted, nextTick } from 'vue';
 import HomePage from './components/HomePage.vue';
-import CreatorPage from './components/CreatorPage.vue';
 import ViewerPage from './components/ViewerPage.vue';
 import SchoolSoftLogin from './components/SchoolSoftLogin.vue';
 import SchoolSoftPreview from './components/SchoolSoftPreview.vue';
@@ -31,7 +29,6 @@ export default defineComponent({
   name: 'App',
   components: {
     HomePage,
-    CreatorPage,
     ViewerPage,
     SchoolSoftLogin,
     SchoolSoftPreview,
@@ -544,9 +541,7 @@ html {
 
 /* Ensure page content is above bubbles */
 .home-page,
-.creator-page,
 .viewer-page,
-.preset-selection-page,
 .constraints-page,
 .schoolsoft-login {
   position: relative;

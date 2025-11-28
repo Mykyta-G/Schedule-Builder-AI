@@ -86,7 +86,7 @@ export default defineComponent({
     const isLoggedIn = ref(false);
 
     const goBack = () => {
-      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
+      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'home' } }));
     };
 
     const navBack = () => {

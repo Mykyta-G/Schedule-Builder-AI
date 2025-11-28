@@ -902,10 +902,10 @@ export default defineComponent({
     const goToHome = () => {
       logNavigation('NAVIGATE_TO_HOME', {
         fromPage: 'viewer',
-        toPage: 'creator',
+        toPage: 'home',
         presetId: props.presetId
       });
-      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'creator' } }));
+      window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'home' } }));
     };
 
     const goToConstraints = () => {
