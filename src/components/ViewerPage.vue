@@ -60,30 +60,37 @@
                   </div>
                 </button>
               </div>
-              <div class="solver-options-panel">
-                <label class="solver-option">
-                  <input type="checkbox" v-model="solverOptions.relaxedConstraints">
-                  <span>Use relaxed constraints (faster search)</span>
-                </label>
-                <label class="solver-option">
-                  <input type="checkbox" v-model="solverOptions.includeLunch">
-                  <span>Include lunch break</span>
-                </label>
-                <label class="solver-option">
-                  <input type="checkbox" v-model="solverOptions.debugMode">
-                  <span>Enable solver debug output</span>
-                </label>
-                <div class="solver-option" v-if="solverOptions.includeLunch">
-                  <label class="solver-option-inline">
-                    <span>Lunch granularity (minutes)</span>
-                    <input
-                      type="number"
-                      min="5"
-                      step="5"
-                      v-model.number="solverOptions.lunchGranularity"
-                      class="solver-option-number"
-                    >
+              
+              <!-- Advanced Options Dropdown -->
+              <div class="options-container" v-if="isCreatorMode" ref="optionsContainerRef">
+                <button class="options-btn" @click.stop="showOptionsPanel = !showOptionsPanel">
+                  ⚙️ Advanced Options
+                </button>
+                <div class="options-dropdown" v-if="showOptionsPanel" @click.stop>
+                  <label class="option-item">
+                    <input type="checkbox" v-model="solverOptions.relaxedConstraints">
+                    <span>Use relaxed constraints (faster search)</span>
                   </label>
+                  <label class="option-item">
+                    <input type="checkbox" v-model="solverOptions.includeLunch">
+                    <span>Include lunch break</span>
+                  </label>
+                  <label class="option-item">
+                    <input type="checkbox" v-model="solverOptions.debugMode">
+                    <span>Enable solver debug output</span>
+                  </label>
+                  <div class="option-item" v-if="solverOptions.includeLunch">
+                    <label>
+                      <span>Lunch granularity (minutes)</span>
+                      <input
+                        type="number"
+                        min="5"
+                        step="5"
+                        v-model.number="solverOptions.lunchGranularity"
+                        class="option-input"
+                      >
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2032,6 +2039,16 @@ export default defineComponent({
       isBuilding.value = false;
     };
 
+  const showOptionsPanel = ref(false);
+  const optionsContainerRef = ref(null);
+  
+  // Close dropdown when clicking outside
+  const handleClickOutside = (event) => {
+    if (optionsContainerRef.value && !optionsContainerRef.value.contains(event.target)) {
+      showOptionsPanel.value = false;
+    }
+  };
+  
   const solverOptions = reactive({
     relaxedConstraints: true,
     includeLunch: true,
@@ -2722,6 +2739,7 @@ export default defineComponent({
     };
 
     onMounted(() => {
+      document.addEventListener('click', handleClickOutside);
       window.addEventListener('constraints-updated', handleConstraintsUpdate);
       window.addEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
       window.addEventListener('time-slots-updated-viewer', handleTimeSlotsUpdate);
@@ -2767,6 +2785,7 @@ export default defineComponent({
     });
 
     onUnmounted(() => {
+      document.removeEventListener('click', handleClickOutside);
       // Save state before unmounting
       saveState();
       
@@ -2786,6 +2805,8 @@ export default defineComponent({
       isChatOpen,
       toggleChat,
       isCreatorMode,
+      showOptionsPanel,
+      optionsContainerRef,
       classes,
       teachers,
       classrooms,
@@ -2947,10 +2968,16 @@ export default defineComponent({
 .creator-container {
   max-width: 120vh;
   margin: 0 auto;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 3vh;
+  border-radius: 1.5vh;
+  box-shadow: 0 0.2vh 1vh rgba(0, 0, 0, 0.08);
+  position: relative;
+  z-index: 2;
 }
 
 .creator-title {
-  font-size: 3vh;
+  font-size: 6vh;
   font-weight: 600;
   color: #2d3748;
   margin: 0 0 1vh 0;
@@ -2966,6 +2993,12 @@ export default defineComponent({
 
 .import-section {
   margin-bottom: 3vh;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 2vh;
+  border-radius: 1vh;
+  box-shadow: 0 0.1vh 0.5vh rgba(0, 0, 0, 0.05);
+  position: relative;
+  z-index: 2;
 }
 
 .section-title {
@@ -3020,40 +3053,69 @@ export default defineComponent({
   box-shadow: 0 0.4vh 1.2vh rgba(43, 108, 176, 0.25);
 }
 
-.solver-options-panel {
+.options-container {
+  position: relative;
+  margin: 1.5vh 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 1.2vh 2vh;
+  justify-content: center;
+}
+
+.options-btn {
+  padding: 1vh 2vh;
+  border: 0.15vh solid #667eea;
+  border-radius: 0.5vh;
+  background: #667eea;
+  color: white;
+  font-size: 1.5vh;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.options-btn:hover {
+  background: #5568d3;
+}
+
+.options-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5vh);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 25vh;
   padding: 1.5vh;
-  border: 0.1vh dashed #cbd5f5;
-  border-radius: 1vh;
-  background: #f8fafc;
-  margin-bottom: 2vh;
-}
-
-.solver-option {
+  background: white;
+  border: 0.15vh solid #e2e8f0;
+  border-radius: 0.5vh;
+  box-shadow: 0 0.2vh 0.8vh rgba(0, 0, 0, 0.1);
+  z-index: 1000;
   display: flex;
-  align-items: center;
-  gap: 0.8vh;
-  font-size: 1.35vh;
-  color: #2d3748;
-}
-
-.solver-option input[type='checkbox'] {
-  transform: scale(1.1);
-}
-
-.solver-option-inline {
-  display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 1vh;
 }
 
-.solver-option-number {
-  width: 6vh;
-  padding: 0.6vh;
+.option-item {
+  display: flex;
+  align-items: center;
+  gap: 0.8vh;
+  font-size: 1.4vh;
+  color: #2d3748;
+}
+
+.option-item input[type='checkbox'] {
+  cursor: pointer;
+}
+
+.option-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.8vh;
+  width: 100%;
+}
+
+.option-input {
+  width: 5vh;
+  padding: 0.4vh;
   border: 0.1vh solid #cbd5e0;
-  border-radius: 0.6vh;
+  border-radius: 0.3vh;
   font-size: 1.3vh;
 }
 
@@ -3180,11 +3242,13 @@ export default defineComponent({
 }
 
 .category-card {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.95);
   border: 0.1vh solid #e2e8f0;
   border-radius: 1vh;
   padding: 2vh;
-  box-shadow: 0 0.1vh 0.3vh rgba(0, 0, 0, 0.05);
+  box-shadow: 0 0.2vh 0.8vh rgba(0, 0, 0, 0.08);
+  position: relative;
+  z-index: 2;
 }
 
 .category-header {
@@ -3298,19 +3362,21 @@ export default defineComponent({
 
 .build-section {
   margin-top: 3vh;
-  padding-top: 2.5vh;
-  border-top: 0.1vh solid #e2e8f0;
+  padding: 2.5vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1vh;
+  position: relative;
+  z-index: 2;
 }
 
 .build-btn {
   padding: 1.8vh 3.5vh;
   border: none;
   border-radius: 1vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #667eea 100%);
+  background-size: 200% 100%;
   color: white;
   font-size: 1.7vh;
   font-weight: 600;
@@ -3320,11 +3386,27 @@ export default defineComponent({
   align-items: center;
   gap: 0.8vh;
   box-shadow: 0 0.3vh 1.2vh rgba(102, 126, 234, 0.3);
+  animation: gradientMove 3s ease infinite;
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes gradientMove {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .build-btn:hover:not(:disabled) {
   transform: translateY(-0.2vh);
   box-shadow: 0 0.5vh 1.8vh rgba(102, 126, 234, 0.4);
+  animation-duration: 2s;
 }
 
 .build-btn:disabled {
@@ -3362,10 +3444,13 @@ export default defineComponent({
 .solver-assignments {
   width: 100%;
   margin-top: 2vh;
-  background: #f9fafb;
+  background: rgba(255, 255, 255, 0.95);
   border: 0.1vh solid #e2e8f0;
   border-radius: 1vh;
   padding: 2vh;
+  box-shadow: 0 0.2vh 0.8vh rgba(0, 0, 0, 0.08);
+  position: relative;
+  z-index: 2;
 }
 
 .solver-title {
