@@ -334,7 +334,9 @@ def _sanitize_lesson_templates(raw_templates: Any) -> List[Dict[str, Any]]:
                 "sessionsPerWeek": sessions_per_week,
                 "duration": duration_minutes,
                 "preferredRoom": preferred_room,
+                "preferredRoom": preferred_room,
                 "allowedRooms": allowed_rooms,
+                "fixedSessions": item.get("fixedSessions") or {},
             }
         )
 
@@ -844,9 +846,17 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                         "preferredRoom": preferred_room,
                         "roomDomainNames": allowed_rooms[:],
                         "requiresBufferAfter": requires_buffer_after,
+                        "requiresBufferAfter": requires_buffer_after,
                         "isLunch": False,
                     }
                 )
+                
+                # Check for fixed session configuration
+                # fixedSessions is a dict: "weekIndex-occurrenceIndex" -> { day, start, end }
+                fixed_key = f"{week_index}-{occurrence_index}"
+                fixed_info = template.get("fixedSessions", {}).get(fixed_key)
+                if fixed_info:
+                    sessions[-1]["fixedInfo"] = fixed_info
 
     if not classrooms:
         classrooms.append("Klassrum A")
@@ -1113,6 +1123,44 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
             ),
             f"slot_day_link_{idx}",
         )
+        
+        # Apply fixed session constraints if present
+        if "fixedInfo" in session:
+            fixed = session["fixedInfo"]
+            # Find the matching slot index
+            # We need to find a slot in available_time_slots that matches day, start, end
+            # AND is in the correct week
+            matched_slot_index = None
+            
+            # First try exact match
+            for s_idx in session["slotDomain"]:
+                slot_data = available_time_slots[s_idx]
+                if (slot_data["dayName"] == fixed.get("day") and 
+                    slot_data["start"] == fixed.get("start") and
+                    slot_data["weekIndex"] == session["weekIndex"]):
+                    matched_slot_index = s_idx
+                    break
+            
+            # If no exact match, try matching just by time and day (if slots are generic)
+            if matched_slot_index is None:
+                 for s_idx in session["slotDomain"]:
+                    slot_data = available_time_slots[s_idx]
+                    if (slot_data["dayName"] == fixed.get("day") and 
+                        slot_data["start"] == fixed.get("start")):
+                        matched_slot_index = s_idx
+                        break
+            
+            if matched_slot_index is not None:
+                add_constraint(
+                    slot_vars[idx] == matched_slot_index,
+                    f"fixed_session_slot_{idx}",
+                )
+                # Also fix the day variable
+                slot_data = available_time_slots[matched_slot_index]
+                add_constraint(
+                    day_vars[idx] == slot_data["dayIndex"],
+                    f"fixed_session_day_{idx}",
+                )
 
         subject_key = (session["classIndex"], session["weekIndex"], session["subjectName"])
         subject_sessions_by_week_class[subject_key].append(idx)
@@ -1168,128 +1216,187 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
                 day_vars[other_idx] == day_vars[base_idx],
                 f"weekly_pattern_day_{base_idx}_{other_idx}",
             )
-
-    if not disable_subject_spread:
-        for indices in subject_sessions_by_week_class.values():
-            if len(indices) > 1:
-                for i in range(len(indices)):
-                    for j in range(i + 1, len(indices)):
+            
+    # Check for bypassConstraints flag
+    # If true, we skip ALL standard constraints (conflicts, limits, idle, lunch)
+    # We ONLY apply fixed session constraints (which are applied above)
+    bypass_constraints = bool(constraints_cfg.get("bypassConstraints"))
+    
+    if bypass_constraints:
+        if debug_enabled:
+            print("DEBUG: bypassConstraints is enabled. Skipping standard constraints.")
+        # We still need to ensure valid bounds for variables, which is done above.
+        # We just skip the conflict/limit logic below.
+        pass
+    else:
+        # Process simultaneous sessions constraint (only if not bypassing, or maybe we should keep this?)
+        # Simultaneous sessions are structural, so we should probably keep them even in bypass mode
+        # if they are explicitly requested. However, fixed sessions usually cover this.
+        # Let's keep simultaneous sessions as they are explicit structural requirements.
+        
+        # Expects a list of groups, where each group is a list of {templateIndex, occurrenceIndex}
+        simultaneous_groups = constraints_cfg.get("simultaneousSessions") or []
+        if simultaneous_groups:
+            for group_idx, group in enumerate(simultaneous_groups):
+                if len(group) <= 1:
+                    continue
+                
+                # Find the session indices for each item in the group
+                session_indices = []
+                for item in group:
+                    t_idx = item.get("templateIndex")
+                    o_idx = item.get("occurrenceIndex")
+                    if t_idx is not None and o_idx is not None:
+                        indices = template_occurrence_groups.get((t_idx, o_idx), [])
+                        if indices:
+                            session_indices.append(indices)
+                
+                if len(session_indices) <= 1:
+                    continue
+                    
+                base_indices = session_indices[0]
+                for other_indices in session_indices[1:]:
+                    # Link corresponding weeks
+                    for week_i in range(min(len(base_indices), len(other_indices))):
+                        idx_a = base_indices[week_i]
+                        idx_b = other_indices[week_i]
+                        
                         add_constraint(
-                            day_vars[indices[i]] != day_vars[indices[j]],
-                            f"subject_day_spread_{indices[i]}_{indices[j]}",
+                            slot_vars[idx_a] == slot_vars[idx_b],
+                            f"simultaneous_slot_{group_idx}_{idx_a}_{idx_b}",
+                        )
+                        add_constraint(
+                            day_vars[idx_a] == day_vars[idx_b],
+                            f"simultaneous_day_{group_idx}_{idx_a}_{idx_b}",
                         )
 
-    for (class_index, slot_index), indices in class_slot_candidates.items():
-        if len(indices) <= 1:
-            continue
-        terms = [slot_vars[idx] == slot_index for idx in indices]
-        add_constraint(
-            AtMost(*terms, 1),
-            f"class_slot_conflict_{class_index}_{slot_index}",
-        )
-
-    for (teacher_index, slot_index), indices in teacher_slot_candidates.items():
-        if len(indices) <= 1:
-            continue
-        terms = [slot_vars[idx] == slot_index for idx in indices]
-        add_constraint(
-            AtMost(*terms, 1),
-            f"teacher_slot_conflict_{teacher_index}_{slot_index}",
-        )
-
-    for (room_index, slot_index), indices in room_slot_candidates.items():
-        if len(indices) <= 1:
-            continue
-        terms = [
-            And(slot_vars[idx] == slot_index, room_vars[idx] == room_index)
-            for idx in indices
-        ]
-        add_constraint(
-            AtMost(*terms, 1),
-            f"room_slot_conflict_{room_index}_{slot_index}",
-        )
-
-    for (teacher_index, week_index, day_index), indices in teacher_day_candidates.items():
-        if len(indices) > max_teacher_sessions_per_day:
-            terms = [day_vars[idx] == day_index for idx in indices]
-            add_constraint(
-                AtMost(*terms, max_teacher_sessions_per_day),
-                f"teacher_day_load_{teacher_index}_{week_index}_{day_index}",
-            )
-        if len(indices) > 1 and max_teacher_idle_minutes is not None:
-            prohibit_large_idle_gaps(
-                indices,
-                day_index,
-                max_teacher_idle_minutes,
-                f"teacher_idle_{teacher_index}_{week_index}_{day_index}",
-            )
-        if len(indices) > 1 and not disable_transition_buffers:
-            enforce_transition_buffers(
-                indices,
-                day_index,
-                f"teacher_buffer_{teacher_index}_{week_index}_{day_index}",
-            )
-
-    for (class_index, week_index, day_index), indices in class_day_candidates.items():
-        if len(indices) > max_class_sessions_per_day:
-            terms = [day_vars[idx] == day_index for idx in indices]
-            add_constraint(
-                AtMost(*terms, max_class_sessions_per_day),
-                f"class_day_load_{class_index}_{week_index}_{day_index}",
-            )
-        if len(indices) > 1 and max_class_idle_minutes is not None:
-            prohibit_large_idle_gaps(
-                indices,
-                day_index,
-                max_class_idle_minutes,
-                f"class_idle_{class_index}_{week_index}_{day_index}",
-            )
-        if len(indices) > 1 and not disable_transition_buffers:
-            enforce_transition_buffers(
-                indices,
-                day_index,
-                f"class_buffer_{class_index}_{week_index}_{day_index}",
-            )
-        scheduled_terms = [day_vars[idx] == day_index for idx in indices]
-        if scheduled_terms:
-            window_terms = []
-            for idx in indices:
-                slot_pairs = []
-                for slot_index in sessions[idx]["slotDomainByDay"].get(day_index, []):
-                    # Only apply latest start constraint if it was explicitly set
-                    # If None, allow all slots (time slots will handle restrictions)
-                    if latest_class_start_minutes is None:
-                        # No constraint - allow all slots in the domain
-                        slot_pairs.append(
-                            And(
-                                day_vars[idx] == day_index,
-                                slot_vars[idx] == slot_index,
+        if not disable_subject_spread:
+            for indices in subject_sessions_by_week_class.values():
+                if len(indices) > 1:
+                    for i in range(len(indices)):
+                        for j in range(i + 1, len(indices)):
+                            add_constraint(
+                                day_vars[indices[i]] != day_vars[indices[j]],
+                                f"subject_day_spread_{indices[i]}_{indices[j]}",
                             )
-                        )
-                    elif slot_start_minutes[slot_index] <= latest_class_start_minutes:
-                        # Constraint is set - only allow slots within the window
-                        slot_pairs.append(
-                            And(
-                                day_vars[idx] == day_index,
-                                slot_vars[idx] == slot_index,
-                            )
-                        )
-                if slot_pairs:
-                    window_terms.append(Or(*slot_pairs))
-            if window_terms:
+
+        allow_class_overlap = bool(constraints_cfg.get("allowClassOverlap"))
+
+        for (class_index, slot_index), indices in class_slot_candidates.items():
+            if len(indices) <= 1:
+                continue
+            # If class overlap is allowed, skip this constraint
+            if allow_class_overlap:
+                continue
+                
+            terms = [slot_vars[idx] == slot_index for idx in indices]
+            add_constraint(
+                AtMost(*terms, 1),
+                f"class_slot_conflict_{class_index}_{slot_index}",
+            )
+
+        for (teacher_index, slot_index), indices in teacher_slot_candidates.items():
+            if len(indices) <= 1:
+                continue
+            terms = [slot_vars[idx] == slot_index for idx in indices]
+            add_constraint(
+                AtMost(*terms, 1),
+                f"teacher_slot_conflict_{teacher_index}_{slot_index}",
+            )
+
+        for (room_index, slot_index), indices in room_slot_candidates.items():
+            if len(indices) <= 1:
+                continue
+            terms = [
+                And(slot_vars[idx] == slot_index, room_vars[idx] == room_index)
+                for idx in indices
+            ]
+            add_constraint(
+                AtMost(*terms, 1),
+                f"room_slot_conflict_{room_index}_{slot_index}",
+            )
+
+        for (teacher_index, week_index, day_index), indices in teacher_day_candidates.items():
+            if len(indices) > max_teacher_sessions_per_day:
+                terms = [day_vars[idx] == day_index for idx in indices]
                 add_constraint(
-                    Implies(
-                        Or(*scheduled_terms),
-                        Or(*window_terms),
-                    ),
-                    f"class_start_window_{class_index}_{week_index}_{day_index}",
+                    AtMost(*terms, max_teacher_sessions_per_day),
+                    f"teacher_day_load_{teacher_index}_{week_index}_{day_index}",
                 )
-            else:
+            if len(indices) > 1 and max_teacher_idle_minutes is not None:
+                prohibit_large_idle_gaps(
+                    indices,
+                    day_index,
+                    max_teacher_idle_minutes,
+                    f"teacher_idle_{teacher_index}_{week_index}_{day_index}",
+                )
+            if len(indices) > 1 and not disable_transition_buffers:
+                enforce_transition_buffers(
+                    indices,
+                    day_index,
+                    f"teacher_buffer_{teacher_index}_{week_index}_{day_index}",
+                )
+
+        for (class_index, week_index, day_index), indices in class_day_candidates.items():
+            if len(indices) > max_class_sessions_per_day:
+                terms = [day_vars[idx] == day_index for idx in indices]
+                add_constraint(
+                    AtMost(*terms, max_class_sessions_per_day),
+                    f"class_day_load_{class_index}_{week_index}_{day_index}",
+                )
+            if len(indices) > 1 and max_class_idle_minutes is not None:
+                prohibit_large_idle_gaps(
+                    indices,
+                    day_index,
+                    max_class_idle_minutes,
+                    f"class_idle_{class_index}_{week_index}_{day_index}",
+                )
+            if len(indices) > 1 and not disable_transition_buffers:
+                enforce_transition_buffers(
+                    indices,
+                    day_index,
+                    f"class_buffer_{class_index}_{week_index}_{day_index}",
+                )
+            scheduled_terms = [day_vars[idx] == day_index for idx in indices]
+            if scheduled_terms:
+                window_terms = []
                 for idx in indices:
+                    slot_pairs = []
+                    for slot_index in sessions[idx]["slotDomainByDay"].get(day_index, []):
+                        # Only apply latest start constraint if it was explicitly set
+                        # If None, allow all slots (time slots will handle restrictions)
+                        if latest_class_start_minutes is None:
+                            # No constraint - allow all slots in the domain
+                            slot_pairs.append(
+                                And(
+                                    day_vars[idx] == day_index,
+                                    slot_vars[idx] == slot_index,
+                                )
+                            )
+                        elif slot_start_minutes[slot_index] <= latest_class_start_minutes:
+                            # Constraint is set - only allow slots within the window
+                            slot_pairs.append(
+                                And(
+                                    day_vars[idx] == day_index,
+                                    slot_vars[idx] == slot_index,
+                                )
+                            )
+                    if slot_pairs:
+                        window_terms.append(Or(*slot_pairs))
+                if window_terms:
                     add_constraint(
-                        day_vars[idx] != day_index,
-                        f"class_start_window_block_{class_index}_{week_index}_{day_index}_{idx}",
+                        Implies(
+                            Or(*scheduled_terms),
+                            Or(*window_terms),
+                        ),
+                        f"class_start_window_{class_index}_{week_index}_{day_index}",
                     )
+                else:
+                    for idx in indices:
+                        add_constraint(
+                            day_vars[idx] != day_index,
+                            f"class_start_window_block_{class_index}_{week_index}_{day_index}_{idx}",
+                        )
 
     check_result = solver.check()
     if check_result != sat:

@@ -294,9 +294,12 @@ export default defineComponent({
                   teacher: cls.teacher,
                   room: cls.room,
                   count: 0,
-                  totalDuration: 0
+                  totalDuration: 0,
+                  classes: [] // Store references to classes
                 };
               }
+              
+              lessonGroups[key].classes.push(cls);
               
               // Calculate duration in minutes
               const [startH, startM] = cls.startTime.split(':').map(Number);
@@ -307,48 +310,186 @@ export default defineComponent({
               lessonGroups[key].totalDuration += duration;
             });
             
-            const lessonTemplates = Object.values(lessonGroups).map(group => ({
+            // Calculate date range and weeks
+            const dates = flatClasses.map(c => c.date ? new Date(c.date) : null).filter(d => d && !isNaN(d.getTime()));
+            let startDate = new Date();
+            let endDate = new Date();
+            let numberOfWeeks = 1;
+
+            if (dates.length > 0) {
+              const minTime = Math.min(...dates.map(d => d.getTime()));
+              const maxTime = Math.max(...dates.map(d => d.getTime()));
+
+              
+              // Align startDate to the Monday of that week to ensure consistent weekIndex calculation
+              const firstDate = new Date(minTime);
+              const day = firstDate.getDay(); // 0 is Sunday
+              // Calculate difference to get to Monday (if Sunday (0), subtract 6 days. If Mon (1), subtract 0. If Tue (2), subtract 1...)
+              // Monday is 1. 
+              // If day is 0 (Sun), we want previous Monday (-6 days)
+              // If day is 1 (Mon), we want same day (0 days)
+              // If day is 2 (Tue), we want previous Monday (-1 day)
+              const diffToMonday = day === 0 ? -6 : 1 - day;
+              firstDate.setDate(firstDate.getDate() + diffToMonday);
+              startDate = new Date(firstDate);
+              startDate.setHours(0, 0, 0, 0); // Normalize time
+              
+              endDate = new Date(maxTime);
+              
+              // Calculate weeks span (add 1 day to include the last day, then divide by 7 days)
+              // We use Math.max(1, ...) to avoid division by zero or invalid weeks
+              const daySpan = (maxTime - minTime) / (1000 * 60 * 60 * 24) + 1;
+              numberOfWeeks = Math.max(1, Math.ceil(daySpan / 7));
+              
+              console.log('Detected date range:', {
+                start: startDate.toISOString().split('T')[0],
+                end: endDate.toISOString().split('T')[0],
+                daySpan,
+                numberOfWeeks
+              });
+            }
+
+            // Detect overlaps and build simultaneous groups
+            let hasOverlaps = false;
+            const timeMap = {}; // key: "day|startTime|endTime", value: [{ templateIndex, occurrenceIndex }]
+            
+            // We need to map each flatClass to its templateIndex and occurrenceIndex
+            // Re-iterate flatClasses and match with lessonGroups order
+            const groupKeys = Object.keys(lessonGroups);
+            const groupCounters = {}; // key: groupKey, value: currentOccurrenceIndex
+            
+            flatClasses.forEach(cls => {
+              const key = `${cls.subject}|${cls.teacher}|${cls.room}`;
+              const templateIndex = groupKeys.indexOf(key);
+              
+              if (groupCounters[key] === undefined) {
+                groupCounters[key] = 0;
+              }
+              const occurrenceIndex = groupCounters[key]++;
+              
+              const timeKey = `${cls.day}|${cls.startTime}|${cls.endTime}`;
+              if (!timeMap[timeKey]) {
+                timeMap[timeKey] = [];
+              }
+              timeMap[timeKey].push({ templateIndex, occurrenceIndex });
+            });
+            
+            const simultaneousGroups = [];
+            Object.values(timeMap).forEach(group => {
+              if (group.length > 1) {
+                hasOverlaps = true;
+                simultaneousGroups.push(group);
+              }
+            });
+            
+            if (hasOverlaps) {
+                console.log('Schedule has overlaps, enabling allowClassOverlap and simultaneousSessions', {
+                  count: simultaneousGroups.length
+                });
+            }
+
+            // Extract exact time slots from the imported classes
+            // This ensures the solver uses the EXACT lesson times instead of a generic grid
+            const uniqueSlots = {};
+            flatClasses.forEach(cls => {
+                const key = `${cls.startTime}-${cls.endTime}`;
+                if (!uniqueSlots[key]) {
+                    uniqueSlots[key] = {
+                        start: cls.startTime,
+                        end: cls.endTime
+                    };
+                }
+            });
+            const exactTimeSlots = Object.values(uniqueSlots).sort((a, b) => a.start.localeCompare(b.start));
+            console.log('Extracted exact time slots:', exactTimeSlots);
+
+            const lessonTemplates = Object.values(lessonGroups).map(group => {
+              // Build fixedSessions map
+              const fixedSessions = {};
+              // We need to re-find the classes for this group to get their times
+              // This is a bit inefficient but safe. 
+              // Better: store the classes in the group object initially.
+              // Let's assume group.classes exists (we need to add it above)
+              
+              if (group.classes) {
+                 group.classes.forEach((cls, idx) => {
+                    // Calculate week index
+                    const clsDate = new Date(cls.date);
+                    const diffTime = Math.abs(clsDate - startDate);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                    // Week index is 0-based
+                    // If start date is Monday, diffDays/7 is correct.
+                    // Let's use a safer approach:
+                    // weekIndex = floor((clsDate - startDate) / 7 days)
+                    const weekIndex = Math.floor((clsDate - startDate) / (1000 * 60 * 60 * 24 * 7));
+                    
+                    // We need to know which occurrence index this is for this week?
+                    // No, the solver iterates occurrence_index 0..sessionsPerWeek
+                    // We need to assign each class to a unique (week, occurrence) slot.
+                    // Let's group by week first.
+                 });
+              }
+              
+              // Revised approach:
+              // 1. Group classes by week
+              // 2. For each week, assign occurrence indices 0, 1, 2...
+              // 3. Populate fixedSessions
+              
+              const classesByWeek = {};
+              if (group.classes) {
+                  group.classes.sort((a, b) => new Date(a.date) - new Date(b.date));
+                  group.classes.forEach(cls => {
+                      const clsDate = new Date(cls.date);
+                      const weekIndex = Math.floor((clsDate - startDate) / (1000 * 60 * 60 * 24 * 7));
+                      if (!classesByWeek[weekIndex]) classesByWeek[weekIndex] = [];
+                      classesByWeek[weekIndex].push(cls);
+                  });
+              }
+              
+              Object.entries(classesByWeek).forEach(([weekIdx, classes]) => {
+                  classes.forEach((cls, occIdx) => {
+                      const key = `${weekIdx}-${occIdx}`;
+                      fixedSessions[key] = {
+                          day: cls.day,
+                          start: cls.startTime,
+                          end: cls.endTime
+                      };
+                  });
+              });
+
+              return {
               subject: group.subject,
               class: result.data.studentClass || 'My Class', 
               teacher: group.teacher,
               preferredRoom: group.room,
-              sessionsPerWeek: group.count,
-              durationMinutes: Math.round(group.totalDuration / group.count) || 60
-            }));
+              // Normalize sessions per week based on total weeks
+              sessionsPerWeek: Math.max(1, Math.round(group.count / numberOfWeeks)),
+              durationMinutes: Math.round(group.totalDuration / group.count) || 60,
+              fixedSessions: fixedSessions
+            }});
 
             const newSchedule = {
               id: `schoolsoft-${Date.now()}`,
-              name: 'Imported SchoolSoft Schedule',
+              name: `Imported Schedule ${new Date().toLocaleDateString()}`,
+              lastModified: new Date().toISOString(),
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               // Data for ViewerPage/Creator Mode
               classes: [{ name: result.data.studentClass || 'My Class' }],
-              teachers: uniqueTeachers.map(name => ({ name })),
-              classrooms: uniqueRooms.map(name => ({ name })),
-              subjects: uniqueSubjects.map(name => ({ name })),
+              teachers: [...new Set(flatClasses.map(c => c.teacher))].map(t => ({ name: t })),
+              classrooms: [...new Set(flatClasses.map(c => c.room))].map(r => ({ name: r })),
+              subjects: [...new Set(flatClasses.map(c => c.subject))].map(s => ({ name: s })),
               lessonTemplates: lessonTemplates,
-              timeSlots: [
-                { day: 'Monday', start: '08:00', end: '17:00' },
-                { day: 'Tuesday', start: '08:00', end: '17:00' },
-                { day: 'Wednesday', start: '08:00', end: '17:00' },
-                { day: 'Thursday', start: '08:00', end: '17:00' },
-                { day: 'Friday', start: '08:00', end: '17:00' }
-            ],
+              timeSlots: exactTimeSlots, // Also populate top-level timeSlots
               // Add term configuration for Z3 solver (ViewerPage expects 'term', not 'termConfig')
               term: {
                 name: 'Imported Term',
-                startDate: new Date().toISOString().split('T')[0], // Current date in YYYY-MM-DD
-                endDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // +6 months
-                weeks: 26,
+                startDate: startDate.toISOString().split('T')[0], // Use detected start date
+                endDate: endDate.toISOString().split('T')[0], // Use detected end date
+                weeks: numberOfWeeks,
                 days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-                dailySlots: [
-                  { start: '08:00', end: '09:00' },
-                  { start: '09:15', end: '10:15' },
-                  { start: '10:30', end: '11:30' },
-                  { start: '11:45', end: '12:45' },
-                  { start: '13:00', end: '14:00' },
-                  { start: '14:15', end: '15:15' }
-                ]
+                dailySlots: exactTimeSlots, // Use exact slots for the term
+                useExactSlots: true // Flag to tell ViewerPage to use these slots exactly
               },
               // Also keep the raw blocks for reference if needed
               blocks: flatClasses.map((cls, idx) => ({
@@ -359,7 +500,27 @@ export default defineComponent({
                 startTime: cls.startTime,
                 endTime: cls.endTime,
                 day: cls.day,
-              }))
+              })),
+              // Add relaxed constraints for imported schedules to ensure Z3 can solve them
+              // Imported schedules often violate strict default rules (e.g. >3 lessons/day for teachers)
+              constraints: {
+                maxClassSessionsPerDay: 10,
+                maxTeacherSessionsPerDay: 10,
+                maxClassIdleMinutes: 480,
+                maxTeacherIdleMinutes: 480,
+                disableSubjectSpread: true,
+                disableTransitionBuffers: true,
+                physicalEducationBufferMinutes: 0,
+                // Enable overlap if detected in source data
+                allowClassOverlap: hasOverlaps,
+                // Link simultaneous sessions together
+                simultaneousSessions: simultaneousGroups,
+                // Bypass all standard constraints to trust the fixed times from import
+                bypassConstraints: true,
+                lunchBreak: {
+                  enabled: false
+                }
+              }
             };
 
             if (window.api.saveSchedule) {

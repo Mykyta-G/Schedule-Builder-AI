@@ -604,6 +604,11 @@ export default defineComponent({
             if (allowedRooms.length > 0) {
               normalized.allowedRooms = allowedRooms;
             }
+            
+            // CRITICAL: Preserve fixedSessions for SchoolSoft imports (hybrid mode)
+            if (template?.fixedSessions && typeof template.fixedSessions === 'object') {
+              normalized.fixedSessions = { ...template.fixedSessions };
+            }
 
             return normalized;
           })
@@ -1269,6 +1274,235 @@ export default defineComponent({
       }, 300);
     };
 
+    // ========== HYBRID MODE: Helper Functions for Fixed Sessions ===========
+    
+    /**
+     * Convert time string (HH:MM) to minutes since midnight
+     */
+    const timeToMinutes = (timeStr) => {
+      if (!timeStr || typeof timeStr !== 'string') return 0;
+      const parts = timeStr.split(':');
+      if (parts.length !== 2) return 0;
+      const hours = parseInt(parts[0], 10);
+      const minutes = parseInt(parts[1], 10);
+      if (isNaN(hours) || isNaN(minutes)) return 0;
+      return hours * 60 + minutes;
+    };
+
+    /**
+     * Calculate actual date from week index and day name
+     */
+    const calculateDateFromWeekIndex = (startDate, weekIndex, dayName) => {
+      // Map day name to offset from Monday (0 = Monday, 4 = Friday)
+      const dayOffsets = {
+        'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 
+        'Thursday': 3, 'Friday': 4, 'Saturday': 5, 'Sunday': 6
+      };
+      
+      const offset = dayOffsets[dayName] !== undefined ? dayOffsets[dayName] : 0;
+      const targetDate = new Date(startDate);
+      targetDate.setDate(targetDate.getDate() + (weekIndex * 7) + offset);
+      return targetDate;
+    };
+
+    /**
+     * Convert raw blocks data directly to schedule format
+     * Used for SchoolSoft imports to preserve original data fidelity
+     * @param {Array} blocks - Raw lesson blocks from import
+     * @returns {Object} Schedule grouped by day
+     */
+    const convertBlocksToSchedule = (blocks) => {
+      console.log('[ViewerPage] Converting raw blocks to schedule', {
+        blocksCount: blocks.length
+      });
+      
+      if (!Array.isArray(blocks) || blocks.length === 0) {
+        throw new Error('No blocks data available for conversion');
+      }
+      
+      const scheduleByDay = {};
+      
+      blocks.forEach((block, idx) => {
+        try {
+          // Get day key - could be ISO date or day name
+          let dayKey = block.day;
+          
+          // Normalize day key to ISO date if we have term config
+          if (dayKey && !isIsoDayKey(dayKey) && termConfig.value?.startDate) {
+            // Day name like "Monday" - need to find actual date
+            // For now, we'll use it as-is and let the display handle it
+            // TODO: Could map to actual dates using term start date
+          }
+          
+          if (!dayKey) {
+            console.warn(`[ViewerPage] Block ${idx} missing day, skipping`);
+            return;
+          }
+          
+          // Convert to schedule entry format
+          const entry = {
+            id: block.id || `block-${Date.now()}-${idx}`,
+            name: block.title || block.subject || 'Untitled',
+            startMinutes: timeToMinutes(block.startTime),
+            duration: timeToMinutes(block.endTime) - timeToMinutes(block.startTime),
+            teacher: block.teacher || '',
+            classroom: block.room || ''
+          };
+          
+          // Validate entry
+          if (entry.duration <= 0) {
+            console.warn(`[ViewerPage] Block ${idx} has invalid duration, skipping`, block);
+            return;
+          }
+          
+          // Add to schedule
+          if (!scheduleByDay[dayKey]) {
+            scheduleByDay[dayKey] = [];
+          }
+          scheduleByDay[dayKey].push(entry);
+          
+        } catch (error) {
+          console.error(`[ViewerPage] Error processing block ${idx}:`, error, block);
+        }
+      });
+      
+      // Sort all day entries by start time
+      Object.keys(scheduleByDay).forEach(dayKey => {
+        scheduleByDay[dayKey].sort((a, b) => a.startMinutes - b.startMinutes);
+      });
+      
+      console.log('[ViewerPage] Blocks conversion complete', {
+        totalDays: Object.keys(scheduleByDay).length,
+        totalSessions: Object.values(scheduleByDay).reduce((sum, day) => sum + day.length, 0),
+        days: Object.keys(scheduleByDay).sort()
+      });
+      
+      // Sort days chronologically and return as sorted object
+      const sortedSchedule = {};
+      Object.keys(scheduleByDay).sort().forEach(dayKey => {
+        sortedSchedule[dayKey] = scheduleByDay[dayKey];
+      });
+      
+      return sortedSchedule;
+    };
+
+    /**
+     * Convert lessonTemplates with fixedSessions directly to schedule format
+     * Bypasses Z3 solver for already-complete imported schedules (e.g. from SchoolSoft)
+     */
+    const convertFixedSessionsToSchedule = async () => {
+      // PRIORITY 1: Check for raw blocks data (best for SchoolSoft imports)
+      if (originalBlocks.value && originalBlocks.value.length > 0) {
+        console.log('[ViewerPage] 🎯 Using raw blocks data for optimal quality', {
+          blocksCount: originalBlocks.value.length
+        });
+        
+        try {
+          const scheduleByDay = convertBlocksToSchedule(originalBlocks.value);
+          
+          // Update state
+          generatedSchedule.value = scheduleByDay;
+          buildSuccess.value = true;
+          solverError.value = null;
+          preservedSchedule.value = JSON.parse(JSON.stringify(scheduleByDay));
+          schedule.value = scheduleByDay || {};
+          
+          // Switch to viewer mode
+          isCreatorMode.value = false;
+          selectedClassFilter.value = 'All Classes';
+          
+          // Ensure selected day is valid
+          ensureSelectedDayForSchedule(scheduleByDay, { force: true });
+          
+          return; // Success - exit early
+        } catch (error) {
+          console.error('[ViewerPage] Failed to convert blocks, falling back to fixedSessions:', error);
+          // Fall through to fixedSessions approach
+        }
+      }
+      
+      // PRIORITY 2: Fall back to fixedSessions conversion
+      console.log('[ViewerPage] Converting fixedSessions to schedule (no blocks available)');
+      
+      if (!termConfig.value || !termConfig.value.startDate) {
+        throw new Error('Term configuration with startDate is required for fixedSessions conversion');
+      }
+      
+      const termStart = new Date(termConfig.value.startDate);
+      const scheduleByDay = {};
+      
+      // Process each lesson template
+      lessonTemplates.value.forEach((template, templateIndex) => {
+        if (!template.fixedSessions || Object.keys(template.fixedSessions).length === 0) {
+          console.warn(`[ViewerPage] Template ${templateIndex} has no fixedSessions, skipping`);
+          return;
+        }
+        
+        // Process each fixed session
+        Object.entries(template.fixedSessions).forEach(([key, fixed]) => {
+          try {
+            const [weekIndex, occIndex] = key.split('-').map(Number);
+            
+            // Calculate actual date for this session
+            const date = calculateDateFromWeekIndex(termStart, weekIndex, fixed.day);
+            const dayKey = date.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+            
+            // Convert to schedule entry format
+            const entry = {
+              id: `session-${templateIndex}-${key}`,
+              name: `${template.subject} (${template.class})`,
+              startMinutes: timeToMinutes(fixed.start),
+              duration: timeToMinutes(fixed.end) - timeToMinutes(fixed.start),
+              teacher: template.teacher || '',
+              classroom: template.preferredRoom || template.room || ''
+            };
+            
+            // Add to schedule
+            if (!scheduleByDay[dayKey]) {
+              scheduleByDay[dayKey] = [];
+            }
+            scheduleByDay[dayKey].push(entry);
+            
+          } catch (error) {
+            console.error(`[ViewerPage] Error processing fixedSession ${key}:`, error);
+          }
+        });
+      });
+      
+      // Sort all day entries by start time
+      Object.keys(scheduleByDay).forEach(dayKey => {
+        scheduleByDay[dayKey].sort((a, b) => a.startMinutes - b.startMinutes);
+      });
+      
+      console.log('[ViewerPage] Fixed sessions conversion complete', {
+        totalDays: Object.keys(scheduleByDay).length,
+        totalSessions: Object.values(scheduleByDay).reduce((sum, day) => sum + day.length, 0),
+        days: Object.keys(scheduleByDay).sort()
+      });
+      
+      // Sort days chronologically and return as sorted object
+      const sortedSchedule = {};
+      Object.keys(scheduleByDay).sort().forEach(dayKey => {
+        sortedSchedule[dayKey] = scheduleByDay[dayKey];
+      });
+      
+      // Update state
+      generatedSchedule.value = sortedSchedule;
+      buildSuccess.value = true;
+      solverError.value = null;
+      preservedSchedule.value = JSON.parse(JSON.stringify(scheduleByDay));
+      schedule.value = scheduleByDay || {};
+      
+      // Switch to viewer mode to show the schedule
+      isCreatorMode.value = false;
+      selectedClassFilter.value = 'All Classes';
+      
+      // Ensure selected day is valid
+      ensureSelectedDayForSchedule(scheduleByDay, { force: true });
+    };
+
+    // ========== END HYBRID MODE HELPERS ===========
+
     const buildWithSolver = async () => {
       solverError.value = null;
       solverAssignments.value = [];
@@ -1305,6 +1539,51 @@ export default defineComponent({
         return;
       }
 
+      // ========== HYBRID MODE: Detect and Route ===========
+      // Check if this is an imported schedule with fixed sessions
+      const hasFixedSessions = lessonTemplates.value.some(template => 
+        template.fixedSessions && Object.keys(template.fixedSessions).length > 0
+      );
+
+      if (hasFixedSessions) {
+        console.log('[ViewerPage] 🚀 HYBRID MODE: Detected fixedSessions - bypassing Z3, converting directly', {
+          templatesCount: lessonTemplates.value.length,
+          fixedTemplatesCount: lessonTemplates.value.filter(t => t.fixedSessions && Object.keys(t.fixedSessions).length > 0).length,
+          totalFixedSessions: lessonTemplates.value.reduce((sum, t) => sum + (t.fixedSessions ? Object.keys(t.fixedSessions).length : 0), 0)
+        });
+
+        // Update loading message for direct conversion
+        progressMessage.value = 'Converting imported schedule...';
+
+        try {
+          await convertFixedSessionsToSchedule();
+          finishSolverLoading();
+          
+          // Auto-save schedule after successful conversion
+          await saveScheduleToFile();
+          
+          console.log('[ViewerPage] ✅ HYBRID MODE: Schedule converted successfully (Z3 skipped)', {
+            daysCount: Object.keys(generatedSchedule.value || {}).length,
+            sessionsCount: Object.values(generatedSchedule.value || {}).reduce((sum, day) => sum + day.length, 0)
+          });
+          
+          isBuilding.value = false;
+          return; // Exit early - no need to run Z3
+        } catch (error) {
+          console.error('[ViewerPage] ❌ HYBRID MODE: Fixed sessions conversion failed:', error);
+          solverError.value = `Failed to convert imported schedule: ${error.message}. Please try re-importing.`;
+          cancelSolverLoading();
+          isBuilding.value = false;
+          return;
+        }
+      } else {
+        console.log('[ViewerPage] 🔧 STANDARD MODE: No fixedSessions detected - using Z3 solver', {
+          templatesCount: lessonTemplates.value.length
+        });
+      }
+      // ========== END HYBRID MODE ROUTING ===========
+
+
       const payload = {
         classes: mapEntities(classes.value),
         teachers: mapEntities(teachers.value),
@@ -1319,7 +1598,11 @@ export default defineComponent({
         // This approach is more efficient and prevents the solver from getting stuck with too many slot combinations
         let dailySlotsToUse = [];
         
-        if (slotsToUse.length > 0) {
+        // Check if we should use exact slots (e.g. from SchoolSoft import)
+        if (payload.term && payload.term.useExactSlots && payload.term.dailySlots) {
+           console.log('[ViewerPage] Using exact daily slots from term configuration');
+           dailySlotsToUse = payload.term.dailySlots;
+        } else if (slotsToUse.length > 0) {
           // Find the earliest start and latest end across all days
           // This creates one big slot that spans all working hours
           // The display will filter events based on day-specific time slots
@@ -1461,6 +1744,10 @@ export default defineComponent({
           }
           if (Array.isArray(template.allowedRooms) && template.allowedRooms.length > 0) {
             cloned.allowedRooms = [...template.allowedRooms];
+          }
+          // CRITICAL: Include fixedSessions for imported schedules
+          if (template.fixedSessions && Object.keys(template.fixedSessions).length > 0) {
+            cloned.fixedSessions = { ...template.fixedSessions };
           }
           return cloned;
         });

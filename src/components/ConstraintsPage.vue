@@ -469,6 +469,36 @@
           </div>
         </div>
       </div>
+
+      
+      <!-- Avancerat -->
+      <div class="constraint-category">
+        <h3 class="category-title">Avancerat</h3>
+        <div class="constraint-items">
+          <div class="constraint-item">
+            <span class="constraint-label">Trust Import Mode (Bypass Constraints):</span>
+            <label class="toggle-switch">
+              <input
+                v-if="isEditMode"
+                type="checkbox"
+                :checked="customConstraints.bypassConstraints"
+                @change="handleBooleanInput('bypassConstraints', $event)"
+                class="toggle-input"
+              />
+              <span v-if="isEditMode" class="toggle-slider"></span>
+              <span v-else class="constraint-value">{{ formatBoolean(activeConstraints.bypassConstraints) }}</span>
+              <span v-if="isEditMode" class="toggle-label">
+                {{ customConstraints.bypassConstraints ? 'Enabled' : 'Disabled' }}
+              </span>
+            </label>
+            <span v-if="isDefault('bypassConstraints') && !isEditMode" class="default-badge">Standard</span>
+            <span v-if="editedFields.bypassConstraints && isEditMode" class="edited-badge">Redigerad</span>
+            <span class="input-hint">
+              Om aktiverad, ignorerar schemaläggaren alla regler (konflikter, raster, etc.) och litar helt på importerade tider. Används för att tvinga in komplexa importer.
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -523,7 +553,8 @@ export default defineComponent({
         windowEnd: null,
         durationMinutes: null,
         granularityMinutes: null
-      }
+      },
+      bypassConstraints: null
     });
 
     // Original values snapshot - for cancel functionality
@@ -547,7 +578,8 @@ export default defineComponent({
         windowEnd: false,
         durationMinutes: false,
         granularityMinutes: false
-      }
+      },
+      bypassConstraints: false
     });
 
     // Track validation state for each field
@@ -568,7 +600,8 @@ export default defineComponent({
         windowEnd: { valid: true, error: null, warning: null },
         durationMinutes: { valid: true, error: null, warning: null },
         granularityMinutes: { valid: true, error: null, warning: null }
-      }
+      },
+      bypassConstraints: { valid: true, error: null, warning: null }
     });
 
     // Time slots management
@@ -598,14 +631,15 @@ export default defineComponent({
       physicalEducationBufferMinutes: 15, // line 652
       physicalEducationSubjects: ['Idrott och hälsa 1', 'Idrott', 'Gymnastik'],
       classEarliestStartMinutes: 480,     // 8*60, line 674
-      classLatestStartMinutes: 600,       // 10*60, line 682
+      classLatestStartMinutes: 1020,      // 17*60, line 674 (implied end of day)
       lunchBreak: {
-        enabled: true,                    // line 689
-        windowStart: '10:30',            // 10*60+30, line 690
-        windowEnd: '12:30',              // 12*60+30, line 691
-        durationMinutes: 30,              // line 692
-        granularityMinutes: 5             // line 693
-      }
+        enabled: true,                    // line 685
+        windowStart: '11:00',             // line 686
+        windowEnd: '13:00',               // line 687
+        durationMinutes: 40,              // line 688
+        granularityMinutes: 5             // line 689
+      },
+      bypassConstraints: false
     };
 
     // Enhanced logging utilities with context
@@ -1519,6 +1553,7 @@ export default defineComponent({
           durationMinutes: CONSTRAINT_DEFAULTS.lunchBreak.durationMinutes,
           granularityMinutes: CONSTRAINT_DEFAULTS.lunchBreak.granularityMinutes
         };
+        customConstraints.bypassConstraints = CONSTRAINT_DEFAULTS.bypassConstraints;
         
         Object.keys(editedFields).forEach(key => {
           if (key !== 'lunchBreak') {
