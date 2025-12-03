@@ -6,14 +6,14 @@
         <button 
           class="mode-btn" 
           :class="{ 'active': isCreatorMode }"
-          @click="isCreatorMode = true"
+          @click="switchToCreatorMode"
         >
           Creator
         </button>
         <button 
           class="mode-btn" 
           :class="{ 'active': !isCreatorMode }"
-          @click="isCreatorMode = false"
+          @click="switchToViewerMode"
         >
           Viewer
         </button>
@@ -655,9 +655,12 @@ export default defineComponent({
         
         generatedSchedule.value = normalizeScheduleResult(scheduleByDay);
         schedule.value = generatedSchedule.value;
+        // Default to viewer mode when blocks exist (for display)
+        // User can switch to creator mode using the toggle to rebuild/optimize
         isCreatorMode.value = false;
         buildSuccess.value = true;
       } else {
+        // No blocks - default to creator mode for building
         isCreatorMode.value = true;
         resetSolverState();
       }
@@ -953,6 +956,26 @@ export default defineComponent({
 
     const toggleChat = () => {
       isChatOpen.value = !isChatOpen.value;
+    };
+
+    const switchToCreatorMode = () => {
+      // If switching from viewer mode with existing schedule (blocks), clear it but keep form data
+      if (!isCreatorMode.value && generatedSchedule.value) {
+        console.log('[ViewerPage] Switching to creator mode - clearing imported schedule but keeping form data');
+        generatedSchedule.value = null;
+        schedule.value = {};
+        buildSuccess.value = false;
+        solverAssignments.value = [];
+      }
+      isCreatorMode.value = true;
+    };
+
+    const switchToViewerMode = () => {
+      isCreatorMode.value = false;
+      // Ensure selected day is valid when switching to viewer mode
+      if (displayedSchedule.value) {
+        ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
+      }
     };
 
     const importFromSchoolsoft = () => {
@@ -2826,6 +2849,8 @@ export default defineComponent({
       daysOfWeek,
       importFromSchoolsoft,
       importFromSkola24,
+      switchToCreatorMode,
+      switchToViewerMode,
       addClass,
       addTeacher,
       addClassroom,

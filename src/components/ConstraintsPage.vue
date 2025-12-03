@@ -1704,7 +1704,25 @@ export default defineComponent({
         }
         
         // Step 2: Build fixed structure with 5 weekdays
+        // Find the start time from other days (excluding Monday) to normalize Monday
+        // Use Tuesday's start time if available, otherwise use defaultStart
+        let normalizedStart = defaultStart;
+        if (existingMap.has('Tuesday')) {
+          normalizedStart = existingMap.get('Tuesday').start;
+        } else if (existingMap.has('Wednesday')) {
+          normalizedStart = existingMap.get('Wednesday').start;
+        } else if (existingMap.has('Thursday')) {
+          normalizedStart = existingMap.get('Thursday').start;
+        } else if (existingMap.has('Friday')) {
+          normalizedStart = existingMap.get('Friday').start;
+        }
+        
         const result = daysOfWeek.map(day => {
+          if (day === 'Monday') {
+            // Always normalize Monday to match other days' start time
+            const mondaySlot = existingMap.has(day) ? existingMap.get(day) : { start: defaultStart, end: defaultEnd };
+            return { day, start: normalizedStart, end: mondaySlot.end || defaultEnd };
+          }
           if (existingMap.has(day)) {
             return { day, ...existingMap.get(day) };
           }
