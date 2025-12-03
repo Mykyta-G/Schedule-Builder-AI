@@ -387,6 +387,8 @@ export default defineComponent({
     const lessonTemplates = ref([]);
     const isLoadingScreenVisible = ref(false);
     const isRestoringState = ref(false); // Flag to prevent watchers from clearing schedule during restoration
+    const originalBlocks = ref([]); // Store original blocks from loaded data to preserve on save
+    const preservedSchedule = ref(null); // Preserve schedule when switching to creator mode
     const solverProgress = ref(0);
     const progressMessage = ref('Preparing schedule…');
     const progressPhases = [
@@ -625,8 +627,27 @@ export default defineComponent({
         }));
       }
 
+      // Store original blocks for preservation during save
+      if (data.blocks && Array.isArray(data.blocks)) {
+        originalBlocks.value = JSON.parse(JSON.stringify(data.blocks));
+      } else {
+        originalBlocks.value = [];
+      }
+      
+      // Handle generatedSchedule from saved JSON (solver-generated schedules)
+      if (data.generatedSchedule && typeof data.generatedSchedule === 'object' && Object.keys(data.generatedSchedule).length > 0) {
+        console.log('[ViewerPage] Found generatedSchedule, populating schedule view', { 
+          dayCount: Object.keys(data.generatedSchedule).length 
+        });
+        generatedSchedule.value = normalizeScheduleResult(data.generatedSchedule);
+        schedule.value = generatedSchedule.value;
+        // Also preserve it for mode switching
+        preservedSchedule.value = JSON.parse(JSON.stringify(generatedSchedule.value));
+        isCreatorMode.value = false;
+        buildSuccess.value = true;
+      }
       // Handle pre-calculated blocks (e.g. from SchoolSoft import)
-      if (data.blocks && Array.isArray(data.blocks) && data.blocks.length > 0) {
+      else if (data.blocks && Array.isArray(data.blocks) && data.blocks.length > 0) {
         console.log('[ViewerPage] Found imported blocks, populating schedule view', { count: data.blocks.length });
         const scheduleByDay = {};
         
@@ -655,12 +676,14 @@ export default defineComponent({
         
         generatedSchedule.value = normalizeScheduleResult(scheduleByDay);
         schedule.value = generatedSchedule.value;
+        // Also preserve it for mode switching
+        preservedSchedule.value = JSON.parse(JSON.stringify(generatedSchedule.value));
         // Default to viewer mode when blocks exist (for display)
         // User can switch to creator mode using the toggle to rebuild/optimize
         isCreatorMode.value = false;
         buildSuccess.value = true;
       } else {
-        // No blocks - default to creator mode for building
+        // No schedule data - default to creator mode for building
         isCreatorMode.value = true;
         resetSolverState();
       }
@@ -959,23 +982,34 @@ export default defineComponent({
     };
 
     const switchToCreatorMode = () => {
-      // If switching from viewer mode with existing schedule (blocks), clear it but keep form data
+      // Preserve the schedule before switching so it can be restored
       if (!isCreatorMode.value && generatedSchedule.value) {
-        console.log('[ViewerPage] Switching to creator mode - clearing imported schedule but keeping form data');
-        generatedSchedule.value = null;
-        schedule.value = {};
-        buildSuccess.value = false;
-        solverAssignments.value = [];
+        console.log('[ViewerPage] Switching to creator mode - preserving schedule');
+        preservedSchedule.value = JSON.parse(JSON.stringify(generatedSchedule.value));
       }
       isCreatorMode.value = true;
     };
 
-    const switchToViewerMode = () => {
+    const switchToViewerMode = async () => {
       isCreatorMode.value = false;
+      
+      // Always restore preserved schedule if we have one, regardless of current state
+      if (preservedSchedule.value) {
+        console.log('[ViewerPage] Restoring preserved schedule when switching to viewer mode');
+        generatedSchedule.value = JSON.parse(JSON.stringify(preservedSchedule.value));
+        schedule.value = generatedSchedule.value;
+        buildSuccess.value = true;
+      }
+      
       // Ensure selected day is valid when switching to viewer mode
       if (displayedSchedule.value) {
         ensureSelectedDayForSchedule(displayedSchedule.value, { force: true });
+      } else if (generatedSchedule.value) {
+        // If we have a schedule but displayedSchedule is empty, ensure day is set
+        ensureSelectedDayForSchedule(generatedSchedule.value, { force: true });
       }
+      // Auto-save schedule when switching to viewer mode
+      await saveScheduleToFile();
     };
 
     const importFromSchoolsoft = () => {
@@ -1592,12 +1626,16 @@ export default defineComponent({
         generatedSchedule.value = normalizeScheduleResult(response?.scheduleByDay || {});
         solverAssignments.value = Array.isArray(response?.assignments) ? response.assignments : [];
         buildSuccess.value = true;
+        // Preserve the schedule for mode switching
+        preservedSchedule.value = JSON.parse(JSON.stringify(generatedSchedule.value));
         isCreatorMode.value = false;
         selectedClassFilter.value = 'All Classes';
         solverError.value = null;
         schedule.value = generatedSchedule.value || {};
         ensureSelectedDayForSchedule(generatedSchedule.value || {}, { force: true });
         finishSolverLoading();
+        // Auto-save schedule after successful build
+        await saveScheduleToFile();
       } catch (error) {
         // Extract the actual error message - it might be nested in multiple layers
         let actualError = error?.message || 'Failed to build schedule with Z3 solver.';
@@ -2540,6 +2578,105 @@ export default defineComponent({
       }
     };
 
+    // Save schedule to JSON file with comprehensive data
+    const saveScheduleToFile = async () => {
+      if (!props.presetId) {
+        console.log('[ViewerPage] Cannot save schedule - no presetId');
+        return;
+      }
+
+      try {
+        console.log('[ViewerPage] Saving schedule to file', { presetId: props.presetId });
+        
+        // Try to preserve existing blocks - use originalBlocks if available, otherwise try loading from file
+        let blocksToSave = [];
+        if (originalBlocks.value && originalBlocks.value.length > 0) {
+          blocksToSave = JSON.parse(JSON.stringify(originalBlocks.value));
+        } else {
+          try {
+            if (window.api && window.api.readSchedule) {
+              const existingSchedule = await window.api.readSchedule(props.presetId);
+              if (existingSchedule && Array.isArray(existingSchedule.blocks) && existingSchedule.blocks.length > 0) {
+                blocksToSave = existingSchedule.blocks;
+              }
+            }
+          } catch (e) {
+            console.log('[ViewerPage] Could not load existing blocks, will save without preserving them', e);
+          }
+        }
+        
+        // Collect all schedule data
+        const scheduleData = {
+          id: props.presetId,
+          name: props.presetId.includes('schema-') ? 'Schedule' : (props.presetId.includes('schoolsoft-') ? 'Imported SchoolSoft Schedule' : 'Untitled Schedule'),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          
+          // Core entities
+          classes: [...classes.value],
+          teachers: [...teachers.value],
+          classrooms: [...classrooms.value],
+          subjects: [...subjects.value],
+          
+          // Time configuration
+          timeSlots: [...timeSlots.value],
+          term: termConfig.value ? JSON.parse(JSON.stringify(termConfig.value)) : null,
+          
+          // Lesson configuration
+          lessonTemplates: [...lessonTemplates.value],
+          
+          // Generated schedule and solver results
+          generatedSchedule: generatedSchedule.value ? JSON.parse(JSON.stringify(generatedSchedule.value)) : null,
+          solverAssignments: [...solverAssignments.value],
+          
+          // Constraints and options
+          customConstraints: customConstraints.value ? JSON.parse(JSON.stringify(customConstraints.value)) : null,
+          solverOptions: JSON.parse(JSON.stringify(solverOptions)),
+          
+          // Blocks (preserve original blocks from imports, or leave empty for solver-generated schedules)
+          // Blocks are primarily for SchoolSoft imports - solver-generated schedules use generatedSchedule instead
+          blocks: blocksToSave,
+          
+          // UI state (optional, for restoration)
+          isCreatorMode: isCreatorMode.value,
+          buildSuccess: buildSuccess.value,
+          selectedClassFilter: selectedClassFilter.value,
+          selectedDayKey: selectedDayKey.value
+        };
+
+        // Save via IPC
+        if (window.api && window.api.saveSchedule) {
+          const result = await window.api.saveSchedule(scheduleData);
+          if (result && result.success) {
+            console.log('[ViewerPage] Schedule saved successfully', { presetId: props.presetId });
+            logInfo('SAVE_SCHEDULE_TO_FILE_SUCCESS', {
+              presetId: props.presetId,
+              hasClasses: classes.value.length > 0,
+              hasTeachers: teachers.value.length > 0,
+              hasGeneratedSchedule: !!generatedSchedule.value,
+              hasTimeSlots: timeSlots.value.length > 0
+            });
+          } else {
+            console.error('[ViewerPage] Failed to save schedule', result);
+            logError('SAVE_SCHEDULE_TO_FILE_FAILED', new Error(result?.error || 'Unknown error'), {
+              presetId: props.presetId
+            });
+          }
+        } else {
+          console.error('[ViewerPage] saveSchedule API not available');
+          logError('SAVE_SCHEDULE_TO_FILE_API_UNAVAILABLE', new Error('saveSchedule API not available'), {
+            presetId: props.presetId
+          });
+        }
+      } catch (error) {
+        console.error('[ViewerPage] Error saving schedule to file', error);
+        logError('SAVE_SCHEDULE_TO_FILE_ERROR', error, {
+          presetId: props.presetId,
+          category: 'FILE_SAVE'
+        });
+      }
+    };
+
     // Save current state
     const saveState = () => {
       try {
@@ -2865,6 +3002,7 @@ export default defineComponent({
       loadMockManualData,
       solverOptions,
       loadMinimalMockData,
+      saveScheduleToFile,
       schoolsoftIcon,
       skola24Icon,
       isLoadingScreenVisible,

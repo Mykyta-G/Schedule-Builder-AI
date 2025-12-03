@@ -98,7 +98,24 @@
                 ></div>
                 <div class="scheduled-item-content">
                   <div class="item-time">{{ getTimeRange(item) }}</div>
+                  <div class="item-title">{{ item.subject || item.name || 'Lesson' }}</div>
+                  <div class="item-info-grid">
+                    <div v-if="item.classRef" class="item-info-row">
+                      <span class="item-info-label">Class:</span>
+                      <span class="item-info-value">{{ item.classRef }}</span>
+                    </div>
+                    <div v-if="item.teacher" class="item-info-row">
+                      <span class="item-info-label">Teacher:</span>
+                      <span class="item-info-value">{{ item.teacher }}</span>
+                    </div>
+                    <div v-if="item.classroom" class="item-info-row">
+                      <span class="item-info-label">Room:</span>
+                      <span class="item-info-value">{{ item.classroom }}</span>
+                    </div>
+                  </div>
+                  <!-- Hidden input for name editing when expanded -->
                   <input
+                    v-if="expandedItem === item.id"
                     class="item-name-input"
                     v-model="item.name"
                     @input="emitChange"
@@ -1117,6 +1134,7 @@ export default defineComponent({
   z-index: 5;
   min-height: 5vh;
   max-width: calc(100% - 2vh);
+  overflow: hidden;
 }
 
 .scheduled-item:hover {
@@ -1137,6 +1155,46 @@ export default defineComponent({
   color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.0375rem;
+}
+
+.item-title {
+  font-size: 1.9vh;
+  font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1.3;
+  margin-bottom: 0.8vh;
+  word-wrap: break-word;
+}
+
+.item-info-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5vh;
+  margin-top: 0.5vh;
+}
+
+.item-info-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6vh;
+  font-size: 1.3vh;
+  line-height: 1.4;
+}
+
+.item-info-label {
+  font-weight: 600;
+  color: #6b7280;
+  min-width: fit-content;
+  text-transform: uppercase;
+  font-size: 1.2vh;
+  letter-spacing: 0.05em;
+}
+
+.item-info-value {
+  font-weight: 500;
+  color: #374151;
+  flex: 1;
+  word-break: break-word;
 }
 
 .item-name-input {

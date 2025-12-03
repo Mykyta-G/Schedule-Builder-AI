@@ -156,13 +156,20 @@ async function readSchedule(scheduleId) {
         const jsonContent = await fs.readFile(jsonPath, 'utf8');
         const jsonData = JSON.parse(jsonContent);
 
-        // Merge extended fields
+        // Merge extended fields - comprehensive data loading
         if (jsonData.classes) schedule.classes = jsonData.classes;
         if (jsonData.teachers) schedule.teachers = jsonData.teachers;
         if (jsonData.classrooms) schedule.classrooms = jsonData.classrooms;
         if (jsonData.subjects) schedule.subjects = jsonData.subjects;
         if (jsonData.lessonTemplates) schedule.lessonTemplates = jsonData.lessonTemplates;
         if (jsonData.timeSlots) schedule.timeSlots = jsonData.timeSlots;
+        if (jsonData.term) schedule.term = jsonData.term;
+        if (jsonData.generatedSchedule) schedule.generatedSchedule = jsonData.generatedSchedule;
+        if (jsonData.solverAssignments) schedule.solverAssignments = jsonData.solverAssignments;
+        if (jsonData.customConstraints) schedule.customConstraints = jsonData.customConstraints;
+        if (jsonData.solverOptions) schedule.solverOptions = jsonData.solverOptions;
+        // Note: blocks are already loaded from DB above, but JSON blocks might have more data
+        // So we preserve DB blocks but JSON can have extended block data if needed
       }
     } catch (e) {
       console.warn('Could not read extended data from JSON:', e.message);
@@ -185,12 +192,13 @@ async function saveSchedule(schedule) {
     const db = await getDatabase();
     const now = new Date().toISOString();
 
-    // Check if schedule exists
-    const existing = db.exec('SELECT id FROM schedules WHERE id = ?', [schedule.id]);
+    // Check if schedule exists and get existing createdAt
+    const existing = db.exec('SELECT id, createdAt FROM schedules WHERE id = ?', [schedule.id]);
     const exists = existing.length > 0 && existing[0].values.length > 0;
+    const existingCreatedAt = exists && existing[0].values[0] ? existing[0].values[0][1] : null;
 
     if (exists) {
-      // Update existing schedule
+      // Update existing schedule - preserve createdAt from existing record
       db.run(
         'UPDATE schedules SET name = ?, description = ?, updatedAt = ? WHERE id = ?',
         [schedule.name || 'Untitled Schedule', schedule.description || '', now, schedule.id]
@@ -203,26 +211,32 @@ async function saveSchedule(schedule) {
       );
     }
 
-    // Delete existing blocks
-    db.run('DELETE FROM blocks WHERE scheduleId = ?', [schedule.id]);
+    // Update blocks - only if blocks are provided in schedule object
+    // If blocks array is provided (even if empty), update blocks
+    // If blocks field is not provided, preserve existing blocks
+    if ('blocks' in schedule) {
+      // Delete existing blocks
+      db.run('DELETE FROM blocks WHERE scheduleId = ?', [schedule.id]);
 
-    // Insert new blocks
-    if (schedule.blocks && Array.isArray(schedule.blocks)) {
-      for (const block of schedule.blocks) {
-        db.run(
-          'INSERT INTO blocks (id, scheduleId, title, room, teacher, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [
-            block.id,
-            schedule.id,
-            block.title || '',
-            block.room || '',
-            block.teacher || '',
-            block.createdAt || now,
-            block.updatedAt || now
-          ]
-        );
+      // Insert new blocks
+      if (schedule.blocks && Array.isArray(schedule.blocks) && schedule.blocks.length > 0) {
+        for (const block of schedule.blocks) {
+          db.run(
+            'INSERT INTO blocks (id, scheduleId, title, room, teacher, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [
+              block.id,
+              schedule.id,
+              block.title || '',
+              block.room || '',
+              block.teacher || '',
+              block.createdAt || now,
+              block.updatedAt || now
+            ]
+          );
+        }
       }
     }
+    // If 'blocks' is not in schedule object, preserve existing blocks in DB
 
     await saveDatabase();
     await saveDatabase();
@@ -233,8 +247,16 @@ async function saveSchedule(schedule) {
 
     // await exportToJSON(schedule.id); // Replaced with direct write below
 
+    // Prepare comprehensive JSON schedule with all fields
+    const jsonSchedule = {
+      ...schedule,
+      updatedAt: now,
+      // Preserve createdAt from existing record if updating, otherwise use provided or current time
+      createdAt: existingCreatedAt || schedule.createdAt || now
+    };
+    
     const filePath = path.join(SCHEDULES_DIR, `${schedule.id}.json`);
-    await fs.writeFile(filePath, JSON.stringify(schedule, null, 2));
+    await fs.writeFile(filePath, JSON.stringify(jsonSchedule, null, 2));
 
     return { success: true };
   } catch (error) {
