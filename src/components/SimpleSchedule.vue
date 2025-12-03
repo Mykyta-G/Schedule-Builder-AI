@@ -87,46 +87,27 @@
                 :style="{
                   top: `${(item.startMinutes - startHour * 60) * pixelsPerMinute}px`,
                   height: `${item.duration * pixelsPerMinute}px`,
-                  backgroundColor: getItemColor(item)
+                  backgroundColor: getItemColor(item),
+                  borderLeftColor: getItemBorderColor(item)
                 }"
                 draggable="true"
                 @dragstart="startDragScheduledItem($event, item, day)"
-                @mouseenter="hoveredItem = item.id; hoveredItemDay = day"
-                @mouseleave="hoveredItem = null; hoveredItemDay = null"
+                @mouseenter="handleItemHover($event, item, day)"
+                @mousemove="handleItemHover($event, item, day)"
+                @mouseleave="handleItemLeave"
               >
                 <div
                   class="resize-handle top"
                   @mousedown.stop="startResize($event, item, 'top')"
                 ></div>
                 <div class="scheduled-item-content">
-                  <div class="item-time">{{ getTimeRange(item) }}</div>
                   <div class="item-title">{{ item.subject || item.name || 'Lesson' }}</div>
+                  <div class="item-time">{{ getTimeRange(item) }}</div>
                 </div>
                 <div
                   class="resize-handle bottom"
                   @mousedown.stop="startResize($event, item, 'bottom')"
                 ></div>
-                
-                <!-- Hover tooltip with details -->
-                <div 
-                  v-if="hoveredItem === item.id && hoveredItemDay === day && (item.classRef || item.teacher || item.classroom)"
-                  class="item-hover-tooltip"
-                >
-                  <div class="tooltip-content">
-                    <div v-if="item.classRef" class="tooltip-row">
-                      <span class="tooltip-label">Class:</span>
-                      <span class="tooltip-value">{{ item.classRef }}</span>
-                    </div>
-                    <div v-if="item.teacher" class="tooltip-row">
-                      <span class="tooltip-label">Teacher:</span>
-                      <span class="tooltip-value">{{ item.teacher }}</span>
-                    </div>
-                    <div v-if="item.classroom" class="tooltip-row">
-                      <span class="tooltip-label">Room:</span>
-                      <span class="tooltip-value">{{ item.classroom }}</span>
-                    </div>
-                  </div>
-                </div>
               </div>
               
               <!-- Drag placeholder for this day -->
@@ -141,6 +122,34 @@
         </div>
       </div>
     </div>
+
+    <!-- Single tooltip teleported to body to escape overflow container -->
+    <Teleport to="body">
+      <div 
+        v-if="hoveredItemData && tooltipPosition"
+        class="item-hover-tooltip"
+        :class="{ 'tooltip-below': tooltipPositionBelow }"
+        :style="{
+          left: `${tooltipPosition.x}px`,
+          top: `${tooltipPosition.y}px`
+        }"
+      >
+        <div class="tooltip-content">
+          <div v-if="hoveredItemData.classRef" class="tooltip-row">
+            <span class="tooltip-label">Class:</span>
+            <span class="tooltip-value">{{ hoveredItemData.classRef }}</span>
+          </div>
+          <div v-if="hoveredItemData.teacher" class="tooltip-row">
+            <span class="tooltip-label">Teacher:</span>
+            <span class="tooltip-value">{{ hoveredItemData.teacher }}</span>
+          </div>
+          <div v-if="hoveredItemData.classroom" class="tooltip-row">
+            <span class="tooltip-label">Room:</span>
+            <span class="tooltip-value">{{ hoveredItemData.classroom }}</span>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 </template>
 
 <script>
@@ -166,11 +175,23 @@ export default defineComponent({
     const hoverDay = ref(null);
     const hoveredItem = ref(null); // Track which schedule item is being hovered
     const hoveredItemDay = ref(null);
+    const tooltipPosition = ref(null);
+    const tooltipPositionBelow = ref(false);
+
+    // Get the currently hovered item's data
+    const hoveredItemData = computed(() => {
+      if (!hoveredItem.value || !hoveredItemDay.value) return null;
+      const daySchedules = schedules[hoveredItemDay.value];
+      if (!daySchedules) return null;
+      const item = daySchedules.find(i => i.id === hoveredItem.value);
+      if (!item || (!item.classRef && !item.teacher && !item.classroom)) return null;
+      return item;
+    });
 
     // Timeline config
     const startHour = 8; // default start
     const endHour = 17; // default end
-    const pixelsPerHour = 60;
+    const pixelsPerHour = 75;
     const pixelsPerMinute = pixelsPerHour / 60;
 
     // Display days based on view mode
@@ -513,6 +534,49 @@ export default defineComponent({
       return `${format(sh, sm)} - ${format(eh, em)}`;
     };
 
+    const handleItemHover = (event, item, day) => {
+      hoveredItem.value = item.id;
+      hoveredItemDay.value = day;
+      
+      // Calculate tooltip position relative to viewport synchronously
+      const rect = event.currentTarget.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      
+      // Estimate tooltip dimensions (will be refined with actual content)
+      const estimatedTooltipWidth = Math.min(25 * (window.innerHeight / 100), viewportWidth * 0.9);
+      const estimatedTooltipHeight = 100; // Rough estimate
+      
+      // Center horizontally, but constrain to viewport
+      let x = rect.left + rect.width / 2;
+      const minX = estimatedTooltipWidth / 2 + 10; // 10px padding from edge
+      const maxX = viewportWidth - estimatedTooltipWidth / 2 - 10;
+      x = Math.max(minX, Math.min(maxX, x));
+      
+      // Position above item, but ensure it doesn't go off top of screen
+      let y = rect.top;
+      const minY = estimatedTooltipHeight + 20; // 20px padding from top
+      if (y < minY) {
+        // If too close to top, position below instead
+        y = rect.bottom + 10;
+        tooltipPositionBelow.value = true;
+      } else {
+        tooltipPositionBelow.value = false;
+      }
+      
+      tooltipPosition.value = {
+        x: x,
+        y: y
+      };
+    };
+
+    const handleItemLeave = () => {
+      hoveredItem.value = null;
+      hoveredItemDay.value = null;
+      tooltipPosition.value = null;
+      tooltipPositionBelow.value = false;
+    };
+
     const selectDay = (day) => {
       if (!day) {
         return;
@@ -779,6 +843,7 @@ export default defineComponent({
       minutesToTime,
       getTimeRange,
       getItemColor,
+      getItemBorderColor,
       startDragScheduledItem,
       handleDragOver,
       onDrop,
@@ -787,6 +852,11 @@ export default defineComponent({
       placeholderStyle,
       startResize,
       emitChange,
+      handleItemHover,
+      handleItemLeave,
+      tooltipPosition,
+      tooltipPositionBelow,
+      hoveredItemData,
     };
   },
 });
@@ -895,6 +965,8 @@ export default defineComponent({
   display: flex;
   background: #fff;
   border-bottom: 0.1vh solid #f0f0f0;
+  position: relative;
+  z-index: 1;
 }
 
 .days-spacer {
@@ -1021,6 +1093,7 @@ export default defineComponent({
   flex: 1;
   border-right: 0.1vh solid #f0f0f0;
   position: relative;
+  padding: 0.5vh 0;
 }
 
 .schedule-grid.week-view .day-column.hovered {
@@ -1030,6 +1103,7 @@ export default defineComponent({
 .schedule-grid:not(.week-view) .day-column {
   width: 100%;
   position: relative;
+  padding: 0.5vh 0;
 }
 
 .day-column:last-child {
@@ -1055,25 +1129,29 @@ export default defineComponent({
 
 .scheduled-item {
   position: absolute;
-  left: 1vh;
-  right: 1vh;
-  margin: 0.25vh 0;
+  left: 1.5vh;
+  right: 1.5vh;
+  margin: 0.5vh 0;
   background: rgba(139, 92, 246, 0.1);
+  border: 0.1vh solid rgba(139, 92, 246, 0.2);
   border-left: 0.4vh solid #8b5cf6;
   border-radius: 1vh;
   padding: 1.25vh 1.5vh;
   box-shadow: 0 0.1vh 0.4vh rgba(0, 0, 0, 0.1);
   cursor: move;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
   z-index: 5;
-  min-height: 5vh;
-  max-width: calc(100% - 2vh);
-  overflow: hidden;
+  min-height: 6vh;
+  max-width: calc(100% - 3vh);
+  overflow: visible;
+  box-sizing: border-box;
 }
 
 .scheduled-item:hover {
   box-shadow: 0 0.5vh 1.5vh rgba(0, 0, 0, 0.15);
   transform: translateY(-0.1vh);
+  z-index: 100;
+  border-color: rgba(139, 92, 246, 0.4);
 }
 
 .scheduled-item-content {
@@ -1126,8 +1204,9 @@ export default defineComponent({
 
 .drag-placeholder {
   position: absolute;
-  left: 1vh;
-  right: 1vh;
+  left: 1.5vh;
+  right: 1.5vh;
+  margin: 0.5vh 0;
   background: rgba(139, 92, 246, 0.15);
   border: 0.25vh dashed #8b5cf6;
   border-radius: 1vh;
@@ -1135,6 +1214,7 @@ export default defineComponent({
   z-index: 1000;
   opacity: 0;
   transition: opacity 0.2s ease;
+  box-sizing: border-box;
 }
 
 .drag-placeholder.visible {
@@ -1142,39 +1222,62 @@ export default defineComponent({
 }
 
 .item-hover-tooltip {
-  position: absolute;
-  bottom: calc(100% + 1vh);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
+  position: fixed;
+  transform: translateX(-50%) translateY(calc(-100% - 1vh));
+  z-index: 10000;
   pointer-events: none;
   opacity: 0;
   animation: tooltipFadeIn 0.15s ease forwards;
-  max-width: 25vh;
+  max-width: min(25vh, 90vw);
+  width: max-content;
+  min-width: 0;
+}
+
+.item-hover-tooltip.tooltip-below {
+  transform: translateX(-50%) translateY(1vh);
 }
 
 @keyframes tooltipFadeIn {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(0.5vh);
+    transform: translateX(-50%) translateY(calc(-100% - 1.5vh));
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateX(-50%) translateY(calc(-100% - 1vh));
+  }
+}
+
+.item-hover-tooltip.tooltip-below {
+  animation: tooltipFadeInBelow 0.15s ease forwards;
+}
+
+@keyframes tooltipFadeInBelow {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(calc(1vh + 0.5vh));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(1vh);
   }
 }
 
 .tooltip-content {
   background: rgba(17, 24, 39, 0.95);
   color: #fff;
-  padding: 1.2vh 1.6vh;
-  border-radius: 0.8vh;
+  padding: clamp(0.8rem, 1.2vh, 1.5rem) clamp(1rem, 1.6vh, 2rem);
+  border-radius: clamp(0.5rem, 0.8vh, 1rem);
   box-shadow: 0 0.4vh 1.2vh rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
-  gap: 0.7vh;
-  min-width: 18vh;
+  gap: clamp(0.4rem, 0.7vh, 1rem);
+  min-width: min(18vh, 12rem);
+  max-width: 100%;
   backdrop-filter: blur(8px);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  box-sizing: border-box;
 }
 
 .tooltip-content::after {
@@ -1187,27 +1290,43 @@ export default defineComponent({
   border-top-color: rgba(17, 24, 39, 0.95);
 }
 
+.item-hover-tooltip.tooltip-below .tooltip-content::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: rgba(17, 24, 39, 0.95);
+}
+
 .tooltip-row {
   display: flex;
-  align-items: center;
-  gap: 0.8vh;
-  font-size: 1.3vh;
+  align-items: flex-start;
+  gap: clamp(0.4rem, 0.8vh, 1rem);
+  font-size: clamp(0.75rem, 1.3vh, 1rem);
   line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
 }
 
 .tooltip-label {
   font-weight: 600;
   color: #d1d5db;
   min-width: fit-content;
+  flex-shrink: 0;
   text-transform: uppercase;
-  font-size: 1.1vh;
+  font-size: clamp(0.65rem, 1.1vh, 0.875rem);
   letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
 .tooltip-value {
   font-weight: 500;
   color: #fff;
   flex: 1;
+  min-width: 0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 @media (max-width: 768px) {
