@@ -91,6 +91,8 @@
                 }"
                 draggable="true"
                 @dragstart="startDragScheduledItem($event, item, day)"
+                @mouseenter="hoveredItem = item.id; hoveredItemDay = day"
+                @mouseleave="hoveredItem = null; hoveredItemDay = null"
               >
                 <div
                   class="resize-handle top"
@@ -99,64 +101,32 @@
                 <div class="scheduled-item-content">
                   <div class="item-time">{{ getTimeRange(item) }}</div>
                   <div class="item-title">{{ item.subject || item.name || 'Lesson' }}</div>
-                  <div class="item-info-grid">
-                    <div v-if="item.classRef" class="item-info-row">
-                      <span class="item-info-label">Class:</span>
-                      <span class="item-info-value">{{ item.classRef }}</span>
-                    </div>
-                    <div v-if="item.teacher" class="item-info-row">
-                      <span class="item-info-label">Teacher:</span>
-                      <span class="item-info-value">{{ item.teacher }}</span>
-                    </div>
-                    <div v-if="item.classroom" class="item-info-row">
-                      <span class="item-info-label">Room:</span>
-                      <span class="item-info-value">{{ item.classroom }}</span>
-                    </div>
-                  </div>
-                  <!-- Hidden input for name editing when expanded -->
-                  <input
-                    v-if="expandedItem === item.id"
-                    class="item-name-input"
-                    v-model="item.name"
-                    @input="emitChange"
-                    placeholder="Event name"
-                    @focus.stop
-                  >
-                  <div class="item-actions" v-if="expandedItem === item.id">
-                    <div class="time-controls">
-                      <label>
-                        <span>Start</span>
-                        <input 
-                          type="time" 
-                          :value="minutesToTime(item.startMinutes)" 
-                          @input="onStartTimeChange(item, $event.target.value)"
-                          @click.stop
-                        >
-                      </label>
-                      <label>
-                        <span>End</span>
-                        <input 
-                          type="time" 
-                          :value="minutesToTime(item.startMinutes + item.duration)" 
-                          @input="onEndTimeChange(item, $event.target.value)"
-                          @click.stop
-                        >
-                      </label>
-                    </div>
-                    <button class="delete-btn" @click.stop="removeItem(item.id, day)">Delete</button>
-                  </div>
-                  <button 
-                    class="expand-btn" 
-                    v-if="expandedItem !== item.id"
-                    @click.stop="expandedItem = item.id"
-                  >
-                    ⋮
-                  </button>
                 </div>
                 <div
                   class="resize-handle bottom"
                   @mousedown.stop="startResize($event, item, 'bottom')"
                 ></div>
+                
+                <!-- Hover tooltip with details -->
+                <div 
+                  v-if="hoveredItem === item.id && hoveredItemDay === day && (item.classRef || item.teacher || item.classroom)"
+                  class="item-hover-tooltip"
+                >
+                  <div class="tooltip-content">
+                    <div v-if="item.classRef" class="tooltip-row">
+                      <span class="tooltip-label">Class:</span>
+                      <span class="tooltip-value">{{ item.classRef }}</span>
+                    </div>
+                    <div v-if="item.teacher" class="tooltip-row">
+                      <span class="tooltip-label">Teacher:</span>
+                      <span class="tooltip-value">{{ item.teacher }}</span>
+                    </div>
+                    <div v-if="item.classroom" class="tooltip-row">
+                      <span class="tooltip-label">Room:</span>
+                      <span class="tooltip-value">{{ item.classroom }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
               
               <!-- Drag placeholder for this day -->
@@ -193,8 +163,9 @@ export default defineComponent({
     const days = ref(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
     const selectedDay = ref(props.selectedDayKey || days.value[0] || null);
     const viewMode = ref('week'); // 'day' or 'week'
-    const expandedItem = ref(null);
     const hoverDay = ref(null);
+    const hoveredItem = ref(null); // Track which schedule item is being hovered
+    const hoveredItemDay = ref(null);
 
     // Timeline config
     const startHour = 8; // default start
@@ -514,7 +485,6 @@ export default defineComponent({
         duration: 60,
       };
       schedules[day].push(defaults);
-      expandedItem.value = defaults.id;
       emitChange();
     };
 
@@ -522,37 +492,9 @@ export default defineComponent({
       const list = schedules[day];
       const idx = list.findIndex((i) => i.id === id);
       if (idx !== -1) list.splice(idx, 1);
-      if (expandedItem.value === id) expandedItem.value = null;
       emitChange();
     };
 
-    const onStartTimeChange = (item, time) => {
-      const newStartMinutes = timeToMinutes(time);
-      const endMinutes = item.startMinutes + item.duration;
-      
-      if (newStartMinutes < endMinutes) {
-        item.startMinutes = newStartMinutes;
-        item.duration = endMinutes - newStartMinutes;
-        normalizeItem(item);
-      } else {
-        item.startMinutes = newStartMinutes;
-        item.duration = 15;
-        normalizeItem(item);
-      }
-    };
-
-    const onEndTimeChange = (item, time) => {
-      const endMinutes = timeToMinutes(time);
-      const newDuration = endMinutes - item.startMinutes;
-      
-      if (newDuration >= 15) {
-        item.duration = newDuration;
-        normalizeItem(item);
-      } else {
-        item.duration = 15;
-        normalizeItem(item);
-      }
-    };
 
     const getTimeRange = (item) => {
       const s = item.startMinutes;
@@ -769,22 +711,15 @@ export default defineComponent({
       resizingItemId.value = null;
     };
 
-    const handleDocumentClick = (event) => {
-      if (!event.target.closest('.scheduled-item')) {
-        expandedItem.value = null;
-      }
-    };
 
     onMounted(() => {
       window.addEventListener('mousemove', handleResize);
       window.addEventListener('mouseup', stopResize);
-      document.addEventListener('click', handleDocumentClick);
     });
 
     onUnmounted(() => {
       window.removeEventListener('mousemove', handleResize);
       window.removeEventListener('mouseup', stopResize);
-      document.removeEventListener('click', handleDocumentClick);
     });
 
     watch(
@@ -826,7 +761,8 @@ export default defineComponent({
       hoverDay,
       displayDays,
       schedules,
-      expandedItem,
+      hoveredItem,
+      hoveredItemDay,
       startHour,
       endHour,
       pixelsPerHour,
@@ -834,8 +770,6 @@ export default defineComponent({
       fullDayHours,
       addItem,
       removeItem,
-      onStartTimeChange,
-      onEndTimeChange,
       normalizeItem,
       selectDay,
       getShortDayName,
@@ -1162,131 +1096,10 @@ export default defineComponent({
   font-weight: 700;
   color: #1a1a1a;
   line-height: 1.3;
-  margin-bottom: 0.8vh;
   word-wrap: break-word;
 }
 
-.item-info-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5vh;
-  margin-top: 0.5vh;
-}
 
-.item-info-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6vh;
-  font-size: 1.3vh;
-  line-height: 1.4;
-}
-
-.item-info-label {
-  font-weight: 600;
-  color: #6b7280;
-  min-width: fit-content;
-  text-transform: uppercase;
-  font-size: 1.2vh;
-  letter-spacing: 0.05em;
-}
-
-.item-info-value {
-  font-weight: 500;
-  color: #374151;
-  flex: 1;
-  word-break: break-word;
-}
-
-.item-name-input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  font-size: 1.75vh;
-  font-weight: 600;
-  color: #1a1a1a;
-  padding: 0.5vh 0;
-  outline: none;
-  min-width: 0;
-}
-
-.item-name-input::placeholder {
-  color: #9ca3af;
-  font-weight: 500;
-}
-
-.item-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 1vh;
-  padding-top: 1vh;
-  border-top: 0.1vh solid rgba(0, 0, 0, 0.1);
-  position: relative;
-  z-index: 6;
-}
-
-.time-controls {
-  display: flex;
-  gap: 1vh;
-}
-
-.time-controls label {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5vh;
-  font-size: 1.4vh;
-  color: #6b7280;
-  font-weight: 500;
-}
-
-.time-controls input[type="time"] {
-  padding: 0.75vh 1vh;
-  border: 0.1vh solid #e5e7eb;
-  border-radius: 0.75vh;
-  font-size: 1.5vh;
-  background: #fff;
-}
-
-.expand-btn {
-  position: absolute;
-  top: 1vh;
-  right: 1vh;
-  background: rgba(255, 255, 255, 0.95);
-  border: none;
-  border-radius: 0.5vh;
-  width: 3vh;
-  height: 3vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 2vh;
-  color: #6b7280;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  z-index: 10;
-  box-shadow: 0 0.2vh 0.5vh rgba(0, 0, 0, 0.1);
-}
-
-.scheduled-item:hover .expand-btn {
-  opacity: 1;
-}
-
-.delete-btn {
-  padding: 0.75vh 1.5vh;
-  background: #ef4444;
-  color: white;
-  border: none;
-  border-radius: 0.75vh;
-  font-size: 1.5vh;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.delete-btn:hover {
-  background: #dc2626;
-}
 
 .resize-handle {
   position: absolute;
@@ -1326,6 +1139,75 @@ export default defineComponent({
 
 .drag-placeholder.visible {
   opacity: 1;
+}
+
+.item-hover-tooltip {
+  position: absolute;
+  bottom: calc(100% + 1vh);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  animation: tooltipFadeIn 0.15s ease forwards;
+  max-width: 25vh;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(0.5vh);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.tooltip-content {
+  background: rgba(17, 24, 39, 0.95);
+  color: #fff;
+  padding: 1.2vh 1.6vh;
+  border-radius: 0.8vh;
+  box-shadow: 0 0.4vh 1.2vh rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 0.7vh;
+  min-width: 18vh;
+  backdrop-filter: blur(8px);
+}
+
+.tooltip-content::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 0.6vh solid transparent;
+  border-top-color: rgba(17, 24, 39, 0.95);
+}
+
+.tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8vh;
+  font-size: 1.3vh;
+  line-height: 1.4;
+}
+
+.tooltip-label {
+  font-weight: 600;
+  color: #d1d5db;
+  min-width: fit-content;
+  text-transform: uppercase;
+  font-size: 1.1vh;
+  letter-spacing: 0.05em;
+}
+
+.tooltip-value {
+  font-weight: 500;
+  color: #fff;
+  flex: 1;
 }
 
 @media (max-width: 768px) {

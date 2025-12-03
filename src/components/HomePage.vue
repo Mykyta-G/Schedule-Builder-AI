@@ -26,11 +26,19 @@
                 <div
                   v-for="preset in filteredPresets"
                   :key="preset.id"
-                  @mousedown.prevent="selectPreset(preset)"
                   class="dropdown-item"
                 >
-                  <div class="preset-name">{{ preset.name || preset.id }}</div>
-                  <div class="preset-date">{{ formatDate(preset.updatedAt || preset.createdAt) }}</div>
+                  <div class="preset-content" @mousedown.prevent="selectPreset(preset)">
+                    <div class="preset-name">{{ preset.name || preset.id }}</div>
+                    <div class="preset-date">{{ formatDate(preset.updatedAt || preset.createdAt) }}</div>
+                  </div>
+                  <button 
+                    class="preset-delete-btn" 
+                    @click.stop="deletePreset(preset.id)"
+                    title="Delete preset"
+                  >
+                    ×
+                  </button>
                 </div>
               </div>
               <div v-else-if="presets.length === 0" class="dropdown-item no-results">
@@ -115,10 +123,12 @@ export default defineComponent({
       });
     };
 
-    const toggleDropdown = (event) => {
+    const toggleDropdown = async (event) => {
       event?.stopPropagation();
       showDropdown.value = !showDropdown.value;
       if (showDropdown.value) {
+        // Refresh the presets list when opening the dropdown
+        await loadPresets();
         calculateMaxHeight();
         searchQuery.value = '';
         filteredPresets.value = [...presets.value];
@@ -147,6 +157,34 @@ export default defineComponent({
           presetId: preset.id
         } 
       }));
+    };
+
+    const deletePreset = async (presetId) => {
+      const preset = presets.value.find(p => p.id === presetId);
+      const presetName = preset?.name || presetId;
+      
+      if (!confirm(`Are you sure you want to delete "${presetName}"?`)) {
+        return;
+      }
+
+      try {
+        if (!window.api || !window.api.deleteSchedule) {
+          alert('Delete API not available');
+          return;
+        }
+
+        const result = await window.api.deleteSchedule(presetId);
+        
+        if (result && result.success) {
+          // Reload the presets list
+          await loadPresets();
+        } else {
+          alert(result?.error || 'Failed to delete preset');
+        }
+      } catch (error) {
+        console.error('Error deleting preset:', error);
+        alert('An error occurred while deleting');
+      }
     };
 
     const formatDate = (dateString) => {
@@ -242,6 +280,7 @@ export default defineComponent({
       dropdownStyle,
       toggleDropdown,
       selectPreset,
+      deletePreset,
       formatDate,
       searchQuery,
       filterPresets,
@@ -459,9 +498,12 @@ export default defineComponent({
 
 .dropdown-item {
   padding: 2vh 2.5vh;
-  cursor: pointer;
   transition: background-color 0.2s ease;
   border-bottom: 0.1vh solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1vh;
 }
 
 .dropdown-item:last-child {
@@ -476,6 +518,12 @@ export default defineComponent({
   background-color: #edf2f7;
 }
 
+.preset-content {
+  flex: 1;
+  cursor: pointer;
+  min-width: 0;
+}
+
 .preset-name {
   font-size: 1.7vh;
   font-weight: 500;
@@ -486,6 +534,30 @@ export default defineComponent({
 .preset-date {
   font-size: 1.4vh;
   color: #718096;
+}
+
+.preset-delete-btn {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-size: 2.4vh;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.8vh 1.2vh;
+  border-radius: 0.6vh;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  opacity: 0;
+  font-weight: 300;
+}
+
+.dropdown-item:hover .preset-delete-btn {
+  opacity: 1;
+}
+
+.preset-delete-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
 }
 
 .no-results {

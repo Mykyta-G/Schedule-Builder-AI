@@ -214,20 +214,6 @@
               </p>
               <p v-if="solverError" class="build-error">{{ solverError }}</p>
               <p v-else-if="buildSuccess" class="build-success">Schedule generated! Switched to viewer mode.</p>
-              <div v-if="visibleAssignments.length" class="solver-assignments">
-                <h4 class="solver-title">Generated Assignments</h4>
-                <ul class="solver-list">
-                  <li v-for="(assignment, index) in visibleAssignments" :key="index" class="solver-item">
-                    <span class="solver-subject">{{ assignment.subject }}</span>
-                    <span class="solver-meta">
-                      {{ assignment.class }} · {{ assignment.teacher }} · {{ assignment.classroom }}
-                    </span>
-                    <span class="solver-timeslot">
-                      {{ assignment.timeSlot?.day }} {{ assignment.timeSlot?.start }} - {{ assignment.timeSlot?.end }}
-                    </span>
-                  </li>
-                </ul>
-              </div>
             </div>
           </div>
         </div>
@@ -391,6 +377,7 @@ export default defineComponent({
     const preservedSchedule = ref(null); // Preserve schedule when switching to creator mode
     const solverProgress = ref(0);
     const progressMessage = ref('Preparing schedule…');
+    const showAssignmentsList = ref(false); // Collapsed by default to avoid giant list
     const progressPhases = [
       {
         limit: 70,
@@ -484,6 +471,33 @@ export default defineComponent({
       if (!data || typeof data !== 'object') {
         return;
       }
+
+      // Clear/reset all state first to prevent data leakage between schedules
+      console.log('[ViewerPage] Clearing previous state before applying new data', {
+        presetId: props.presetId,
+        hadSchedule: !!generatedSchedule.value,
+        hadAssignments: solverAssignments.value.length > 0
+      });
+      
+      // Reset all state to defaults
+      classes.value = [];
+      teachers.value = [];
+      classrooms.value = [];
+      subjects.value = [];
+      timeSlots.value = [];
+      termConfig.value = null;
+      lessonTemplates.value = [];
+      generatedSchedule.value = null;
+      solverAssignments.value = [];
+      solverError.value = null;
+      buildSuccess.value = false;
+      preservedSchedule.value = null;
+      originalBlocks.value = [];
+      schedule.value = {};
+      
+      // Reset UI state
+      selectedClassFilter.value = 'All Classes';
+      selectedDayKey.value = null;
 
       const sanitizeEntities = (items) => {
         if (!Array.isArray(items)) return [];
@@ -613,18 +627,28 @@ export default defineComponent({
       lessonTemplates.value = sanitizeLessonTemplatesData(data.lessonTemplates);
 
       if (timeSlots.value.length === 0 && termConfig.value) {
-        const preferredDay =
-          termConfig.value.days.find((day) => !isWeekendKey(day)) || termConfig.value.days[0] || daysOfWeek[0];
-        const generatedSlots = termConfig.value.dailySlots.map((slot) => ({
-          day: preferredDay,
-          start: slot.start,
-          end: slot.end,
-        }));
-        timeSlots.value = generatedSlots;
-        // Sync generated slots to global state
-        window.dispatchEvent(new CustomEvent('time-slots-updated', {
-          detail: { timeSlots: timeSlots.value, presetId: props.presetId }
-        }));
+        const daysInTerm = termConfig.value.days || daysOfWeek;
+        const validDays = daysInTerm.filter(day => !isWeekendKey(day));
+        
+        // Get time range from dailySlots
+        const dailySlots = termConfig.value.dailySlots || [];
+        if (dailySlots.length > 0) {
+          const earliestStart = dailySlots[0].start;
+          const latestEnd = dailySlots[dailySlots.length - 1].end;
+          
+          // Create time slots for each weekday
+          const generatedSlots = validDays.map(day => ({
+            day: day,
+            start: earliestStart,
+            end: latestEnd
+          }));
+          
+          timeSlots.value = generatedSlots;
+          // Sync to global state
+          window.dispatchEvent(new CustomEvent('time-slots-updated', {
+            detail: { timeSlots: timeSlots.value, presetId: props.presetId }
+          }));
+        }
       }
 
       // Store original blocks for preservation during save
@@ -2066,7 +2090,13 @@ export default defineComponent({
         teachers: teachersList,
         classrooms: classroomsList,
         subjects: subjectsList,
-        timeSlots: [],
+        timeSlots: [
+          { day: 'Monday', start: '08:10', end: '16:50' },
+          { day: 'Tuesday', start: '08:10', end: '16:50' },
+          { day: 'Wednesday', start: '08:10', end: '16:50' },
+          { day: 'Thursday', start: '08:10', end: '16:50' },
+          { day: 'Friday', start: '08:10', end: '16:50' }
+        ],
         lessonTemplates,
         constraints: {
           maxClassSessionsPerDay: 6,
@@ -2588,20 +2618,28 @@ export default defineComponent({
       try {
         console.log('[ViewerPage] Saving schedule to file', { presetId: props.presetId });
         
-        // Try to preserve existing blocks - use originalBlocks if available, otherwise try loading from file
+        // Try to preserve existing blocks and createdAt - use originalBlocks if available, otherwise try loading from file
         let blocksToSave = [];
+        let existingCreatedAt = null;
         if (originalBlocks.value && originalBlocks.value.length > 0) {
           blocksToSave = JSON.parse(JSON.stringify(originalBlocks.value));
         } else {
           try {
             if (window.api && window.api.readSchedule) {
               const existingSchedule = await window.api.readSchedule(props.presetId);
-              if (existingSchedule && Array.isArray(existingSchedule.blocks) && existingSchedule.blocks.length > 0) {
-                blocksToSave = existingSchedule.blocks;
+              if (existingSchedule) {
+                // Preserve blocks if available
+                if (Array.isArray(existingSchedule.blocks) && existingSchedule.blocks.length > 0) {
+                  blocksToSave = existingSchedule.blocks;
+                }
+                // Preserve createdAt from existing schedule
+                if (existingSchedule.createdAt) {
+                  existingCreatedAt = existingSchedule.createdAt;
+                }
               }
             }
           } catch (e) {
-            console.log('[ViewerPage] Could not load existing blocks, will save without preserving them', e);
+            console.log('[ViewerPage] Could not load existing schedule data, will save without preserving them', e);
           }
         }
         
@@ -2609,7 +2647,8 @@ export default defineComponent({
         const scheduleData = {
           id: props.presetId,
           name: props.presetId.includes('schema-') ? 'Schedule' : (props.presetId.includes('schoolsoft-') ? 'Imported SchoolSoft Schedule' : 'Untitled Schedule'),
-          createdAt: new Date().toISOString(),
+          // Only set createdAt if it's a new schedule (backend will preserve existing one if updating)
+          ...(existingCreatedAt ? { createdAt: existingCreatedAt } : { createdAt: new Date().toISOString() }),
           updatedAt: new Date().toISOString(),
           
           // Core entities
@@ -3610,18 +3649,67 @@ export default defineComponent({
   background: rgba(255, 255, 255, 0.95);
   border: 0.1vh solid #e2e8f0;
   border-radius: 1vh;
-  padding: 2vh;
   box-shadow: 0 0.2vh 0.8vh rgba(0, 0, 0, 0.08);
   position: relative;
   z-index: 2;
 }
 
+.solver-assignments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5vh 2vh;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s ease;
+}
+
+.solver-assignments-header:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
 .solver-title {
-  margin: 0 0 1.5vh 0;
+  margin: 0;
   font-size: 1.6vh;
   font-weight: 600;
   color: #2d3748;
-  text-align: center;
+  flex: 1;
+}
+
+.toggle-icon {
+  font-size: 1.2vh;
+  color: #718096;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.toggle-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.solver-list-container {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0 2vh 2vh 2vh;
+  border-top: 0.1vh solid #e2e8f0;
+}
+
+.solver-list-container::-webkit-scrollbar {
+  width: 0.6vh;
+}
+
+.solver-list-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 0.3vh;
+}
+
+.solver-list-container::-webkit-scrollbar-thumb {
+  background: #cbd5e0;
+  border-radius: 0.3vh;
+}
+
+.solver-list-container::-webkit-scrollbar-thumb:hover {
+  background: #a0aec0;
 }
 
 .solver-list {

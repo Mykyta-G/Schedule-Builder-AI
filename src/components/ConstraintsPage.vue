@@ -437,27 +437,32 @@
       <div class="constraint-category">
         <h3 class="category-title">Starttid</h3>
         <div class="constraint-items">
-          <div v-for="(slot, index) in timeSlots" :key="slot.day" class="time-slot-row">
-            <div class="time-slot-day-locked">{{ slot.day }}</div>
-            <input 
-              v-model="slot.start" 
-              type="text" 
-              placeholder="08:00" 
-              class="time-slot-input" 
-              pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
-              @input="validateTimeSlots"
-              @blur="validateTimeSlots"
-            />
-            <span class="time-separator">-</span>
-            <input 
-              v-model="slot.end" 
-              type="text" 
-              placeholder="16:30" 
-              class="time-slot-input" 
-              pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
-              @input="validateTimeSlots"
-              @blur="validateTimeSlots"
-            />
+          <div v-if="timeSlots && timeSlots.length > 0">
+            <div v-for="(slot, index) in timeSlots" :key="slot.day || index" class="time-slot-row">
+              <div class="time-slot-day-locked">{{ slot.day }}</div>
+              <input 
+                v-model="slot.start" 
+                type="text" 
+                placeholder="08:00" 
+                class="time-slot-input" 
+                pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+                @input="validateTimeSlots"
+                @blur="validateTimeSlots"
+              />
+              <span class="time-separator">-</span>
+              <input 
+                v-model="slot.end" 
+                type="text" 
+                placeholder="16:30" 
+                class="time-slot-input" 
+                pattern="^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+                @input="validateTimeSlots"
+                @blur="validateTimeSlots"
+              />
+            </div>
+          </div>
+          <div v-else class="constraint-item">
+            <span class="constraint-value">Laddar tidsluckor...</span>
           </div>
           <div v-if="!timeSlotsValidation.valid" class="validation-error">
             {{ timeSlotsValidation.error }}
@@ -567,7 +572,13 @@ export default defineComponent({
     });
 
     // Time slots management
-    const timeSlots = ref([]);
+    const timeSlots = ref([
+      { day: 'Monday', start: '08:00', end: '16:30' },
+      { day: 'Tuesday', start: '08:00', end: '16:30' },
+      { day: 'Wednesday', start: '08:00', end: '16:30' },
+      { day: 'Thursday', start: '08:00', end: '16:30' },
+      { day: 'Friday', start: '08:00', end: '16:30' }
+    ]);
     const originalTimeSlots = ref(null); // Track original time slots for change detection
     const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
     const timeSlotsValidation = ref({ valid: true, error: null });
@@ -1719,9 +1730,12 @@ export default defineComponent({
         
         const result = daysOfWeek.map(day => {
           if (day === 'Monday') {
-            // Always normalize Monday to match other days' start time
-            const mondaySlot = existingMap.has(day) ? existingMap.get(day) : { start: defaultStart, end: defaultEnd };
-            return { day, start: normalizedStart, end: mondaySlot.end || defaultEnd };
+            // Preserve Monday's time slot if it exists
+            if (existingMap.has(day)) {
+              return { day, ...existingMap.get(day) };
+            }
+            // Only normalize if Monday doesn't have a time slot
+            return { day, start: normalizedStart, end: defaultEnd };
           }
           if (existingMap.has(day)) {
             return { day, ...existingMap.get(day) };
@@ -1965,7 +1979,9 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.98);
+  position: relative;
+  z-index: 1;
 }
 
 .top-nav {
@@ -2009,7 +2025,9 @@ export default defineComponent({
   flex: 1;
   overflow-y: auto;
   padding: 3vh;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.95);
+  position: relative;
+  z-index: 1;
 }
 
 .constraint-category {

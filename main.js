@@ -50,6 +50,7 @@ ipcMain.handle('create-file', (event, data) => scheduleHandlers.createSchedule(d
 ipcMain.handle('list-schedules', () => scheduleHandlers.listSchedules());
 ipcMain.handle('read-schedule', (event, scheduleId) => scheduleHandlers.readSchedule(scheduleId));
 ipcMain.handle('save-schedule', (event, schedule) => scheduleHandlers.saveSchedule(schedule));
+ipcMain.handle('delete-schedule', (event, scheduleId) => scheduleHandlers.deleteSchedule(scheduleId));
 ipcMain.handle('chat', (event, data) => handleChat(data));
 ipcMain.handle('parse-schoolsoft', (event, data) => require('./backend/schoolSoftParser').parseSchoolSoft(data));
 ipcMain.handle('run-solver', async (event, payload) => {

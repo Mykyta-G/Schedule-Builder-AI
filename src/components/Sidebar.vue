@@ -108,9 +108,16 @@
             :key="schedule.id"
             class="schedule-item"
             :class="{ active: activeSchemaId === schedule.id }"
-            @click="selectSchedule(schedule.id)"
+            @click.stop="selectSchedule(schedule.id)"
           >
-            {{ schedule.name }}
+            <span class="schedule-item-name">{{ schedule.name }}</span>
+            <button 
+              class="schedule-delete-btn" 
+              @click.stop="deleteSchedule(schedule.id)"
+              title="Ta bort schema"
+            >
+              ×
+            </button>
           </div>
           <div v-if="filteredSchedules.length === 0" class="no-schedules">
             Inga scheman hittades
@@ -791,8 +798,44 @@ export default defineComponent({
       cancelEditBlock();
     };
 
-    const toggleSchedulesDropdown = () => {
+    const toggleSchedulesDropdown = async () => {
       schedulesDropdownOpen.value = !schedulesDropdownOpen.value;
+      // Refresh the schedules list when opening the dropdown
+      if (schedulesDropdownOpen.value) {
+        await loadSchedules();
+      }
+    };
+
+    const deleteSchedule = async (scheduleId) => {
+      if (!confirm(`Är du säker på att du vill ta bort "${schedules.value.find(s => s.id === scheduleId)?.name || scheduleId}"?`)) {
+        return;
+      }
+
+      try {
+        if (!window.api || !window.api.deleteSchedule) {
+          showError('IPC API inte tillgänglig');
+          return;
+        }
+
+        const result = await window.api.deleteSchedule(scheduleId);
+        
+        if (result && result.success) {
+          // If the deleted schedule was the active one, clear it
+          if (activeSchemaId.value === scheduleId) {
+            activeSchemaId.value = '';
+            activeSchema.value = null;
+            activeSchemaBlocks.value = [];
+          }
+          
+          // Reload the schedules list
+          await loadSchedules();
+        } else {
+          showError(result?.error || 'Kunde inte ta bort schema');
+        }
+      } catch (error) {
+        console.error('Error deleting schedule:', error);
+        showError('Ett fel uppstod vid borttagning');
+      }
     };
 
     const selectSchedule = async (scheduleId) => {
@@ -1390,6 +1433,7 @@ export default defineComponent({
       saveBlockEdit,
       toggleSchedulesDropdown,
       selectSchedule,
+      deleteSchedule,
       onScheduleChange,
       filterSchedules,
       loadSubjects,
@@ -1755,6 +1799,10 @@ export default defineComponent({
   border-bottom: 1px solid #e5e7eb;
   transition: background 0.2s ease, color 0.2s ease;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .schedule-item:last-child {
@@ -1770,6 +1818,36 @@ export default defineComponent({
   background: #ede9fe;
   color: #7c3aed;
   font-weight: 500;
+}
+
+.schedule-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-delete-btn {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.schedule-item:hover .schedule-delete-btn {
+  opacity: 1;
+}
+
+.schedule-delete-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
 }
 
 .no-schedules {

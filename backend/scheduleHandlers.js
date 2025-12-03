@@ -104,16 +104,109 @@ async function listSchedules() {
     const db = await getDatabase();
     const result = db.exec('SELECT id, name, description, createdAt, updatedAt FROM schedules ORDER BY updatedAt DESC');
 
-    if (!result.length) return [];
+    // Get all existing JSON files from the Schedules folder
+    const jsonFiles = [];
+    try {
+      const files = await fs.readdir(SCHEDULES_DIR);
+      const jsonFileNames = files.filter(f => f.endsWith('.json'));
+      
+      for (const fileName of jsonFileNames) {
+        const scheduleId = fileName.replace('.json', '');
+        const jsonPath = path.join(SCHEDULES_DIR, fileName);
+        
+        try {
+          // Try to read the JSON file to get metadata
+          const content = await fs.readFile(jsonPath, 'utf8');
+          const jsonData = JSON.parse(content);
+          
+          jsonFiles.push({
+            id: scheduleId,
+            name: jsonData.name || jsonData.title || scheduleId,
+            description: jsonData.description || '',
+            createdAt: jsonData.createdAt || new Date().toISOString(),
+            updatedAt: jsonData.updatedAt || new Date().toISOString(),
+            fileName: fileName
+          });
+        } catch (err) {
+          console.warn(`Could not read JSON file ${fileName}:`, err.message);
+        }
+      }
+    } catch (err) {
+      console.warn('Could not read Schedules directory:', err.message);
+    }
 
-    return result[0].values.map(row => ({
-      id: row[0],
-      name: row[1],
-      description: row[2] || '',
-      createdAt: row[3],
-      updatedAt: row[4],
-      fileName: `${row[0]}.json`
-    }));
+    // Create a map of schedules from database
+    const dbSchedules = new Map();
+    if (result.length && result[0].values) {
+      for (const row of result[0].values) {
+        const scheduleId = row[0];
+        dbSchedules.set(scheduleId, {
+          id: scheduleId,
+          name: row[1],
+          description: row[2] || '',
+          createdAt: row[3],
+          updatedAt: row[4],
+          fileName: `${scheduleId}.json`
+        });
+      }
+    }
+
+    // Build final list based on actual JSON files that exist
+    const validSchedules = [];
+    const orphanedScheduleIds = [];
+    const jsonFileIds = new Set(jsonFiles.map(f => f.id));
+
+    // Only include schedules that have actual JSON files
+    for (const [scheduleId, dbSchedule] of dbSchedules.entries()) {
+      const jsonPath = path.join(SCHEDULES_DIR, `${scheduleId}.json`);
+      
+      if (existsSync(jsonPath)) {
+        // File exists, include it with DB metadata (more reliable)
+        validSchedules.push(dbSchedule);
+      } else {
+        // File doesn't exist, mark for cleanup
+        orphanedScheduleIds.push(scheduleId);
+        console.warn(`Schedule ${scheduleId} found in database but JSON file is missing`);
+      }
+    }
+
+    // Add JSON files that aren't in the database yet
+    for (const jsonSchedule of jsonFiles) {
+      if (!dbSchedules.has(jsonSchedule.id)) {
+        // This JSON file isn't in the database, add it
+        try {
+          db.run(
+            'INSERT OR IGNORE INTO schedules (id, name, description, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
+            [jsonSchedule.id, jsonSchedule.name, jsonSchedule.description, jsonSchedule.createdAt, jsonSchedule.updatedAt]
+          );
+          validSchedules.push(jsonSchedule);
+          console.log(`Added missing schedule ${jsonSchedule.id} to database from JSON file`);
+        } catch (err) {
+          console.error(`Error adding schedule ${jsonSchedule.id} to database:`, err);
+        }
+      }
+    }
+
+    // Clean up orphaned database entries (schedules without JSON files)
+    if (orphanedScheduleIds.length > 0) {
+      console.log(`Cleaning up ${orphanedScheduleIds.length} orphaned schedule entries from database`);
+      for (const scheduleId of orphanedScheduleIds) {
+        // Delete blocks first
+        db.run('DELETE FROM blocks WHERE scheduleId = ?', [scheduleId]);
+        // Delete schedule
+        db.run('DELETE FROM schedules WHERE id = ?', [scheduleId]);
+      }
+      await saveDatabase();
+    }
+
+    // Sort by updatedAt descending
+    validSchedules.sort((a, b) => {
+      const dateA = new Date(a.updatedAt || a.createdAt || 0);
+      const dateB = new Date(b.updatedAt || b.createdAt || 0);
+      return dateB - dateA;
+    });
+
+    return validSchedules;
   } catch (error) {
     console.error('Error listing schedules:', error);
     return [];
@@ -265,9 +358,40 @@ async function saveSchedule(schedule) {
   }
 }
 
+async function deleteSchedule(scheduleId) {
+  try {
+    await ensureSchedulesDir();
+    if (!scheduleId) {
+      return { success: false, error: 'Schedule ID is required' };
+    }
+
+    const db = await getDatabase();
+
+    // Delete blocks first (foreign key constraint)
+    db.run('DELETE FROM blocks WHERE scheduleId = ?', [scheduleId]);
+
+    // Delete schedule
+    db.run('DELETE FROM schedules WHERE id = ?', [scheduleId]);
+
+    await saveDatabase();
+
+    // Delete JSON file
+    const jsonPath = path.join(SCHEDULES_DIR, `${scheduleId}.json`);
+    if (existsSync(jsonPath)) {
+      await fs.unlink(jsonPath);
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting schedule:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   createSchedule,
   listSchedules,
   readSchedule,
-  saveSchedule
+  saveSchedule,
+  deleteSchedule
 };
