@@ -208,39 +208,62 @@ export default defineComponent({
       const allDays = days.value;
       if (viewMode.value === 'week') {
         if (!allDays.length) return [];
-        const currentSelection = selectedDay.value || allDays[0];
-        const parsedSelected = parseIsoDate(currentSelection);
-        if (parsedSelected) {
-          const monday = new Date(parsedSelected);
-          const dayIndex = monday.getDay();
-          const diff = dayIndex === 0 ? -6 : 1 - dayIndex; // align to Monday
-          monday.setDate(monday.getDate() + diff);
+        
+        // Sort all days chronologically first
+        const sortedDays = allDays.slice().sort(compareDayKeys);
+        
+        // Check if we have ISO date keys
+        const hasIsoDates = sortedDays.some(day => parseIsoDate(day));
+        
+        if (hasIsoDates) {
+          // Find reference day - prefer selectedDay if it's an ISO date, otherwise use first ISO date
+          let referenceDay = selectedDay.value;
+          if (!referenceDay || !parseIsoDate(referenceDay)) {
+            referenceDay = sortedDays.find(day => parseIsoDate(day)) || sortedDays[0];
+          }
+          
+          const parsedSelected = parseIsoDate(referenceDay);
+          if (parsedSelected) {
+            // Calculate Monday of the week containing the reference day
+            const monday = new Date(parsedSelected);
+            const dayIndex = monday.getDay();
+            const diff = dayIndex === 0 ? -6 : 1 - dayIndex; // align to Monday
+            monday.setDate(monday.getDate() + diff);
 
-          const weekKeys = Array.from({ length: 5 }).map((_, idx) => {
-            const dayDate = new Date(monday.getTime() + idx * msPerDay);
-            return toIsoKey(dayDate);
-          });
+            // Generate week keys from Monday to Friday (5 days)
+            const weekKeys = Array.from({ length: 5 }).map((_, idx) => {
+              const dayDate = new Date(monday.getTime() + idx * msPerDay);
+              return toIsoKey(dayDate);
+            });
 
-          ensureDayBuckets(weekKeys);
+            ensureDayBuckets(weekKeys);
 
-          // Ensure schedules buckets exist even if not in incoming data
-          weekKeys.forEach((key) => {
-            if (!schedules[key]) {
-              schedules[key] = [];
-            }
-          });
+            // Ensure schedules buckets exist even if not in incoming data
+            weekKeys.forEach((key) => {
+              if (!schedules[key]) {
+                schedules[key] = [];
+              }
+            });
 
-          return weekKeys;
+            // Return week keys which are already in chronological order (Mon-Fri)
+            return weekKeys;
+          }
         }
 
-        // Fallback for non-ISO day names
+        // Fallback for non-ISO day names - sort by weekday order
         const weekdayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-        const filtered = allDays.filter((day) => weekdayOrder.includes(day));
+        const filtered = sortedDays.filter((day) => weekdayOrder.includes(day));
         if (filtered.length > 0) {
-          return filtered;
+          // Sort by weekday order to ensure chronological order
+          return filtered.sort((a, b) => {
+            const aIndex = weekdayOrder.indexOf(a);
+            const bIndex = weekdayOrder.indexOf(b);
+            return aIndex - bIndex;
+          });
         }
 
-        return allDays.slice(0, Math.min(5, allDays.length));
+        // Final fallback - return first 5 sorted days (already chronologically sorted)
+        return sortedDays.slice(0, Math.min(5, sortedDays.length));
       }
       return [selectedDay.value];
     });
