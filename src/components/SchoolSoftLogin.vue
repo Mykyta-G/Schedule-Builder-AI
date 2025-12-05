@@ -287,15 +287,20 @@ export default defineComponent({
             // Group by Subject + Teacher + Room
             const lessonGroups = {};
             flatClasses.forEach(cls => {
-              const key = `${cls.subject}|${cls.teacher}|${cls.room}`;
+              // UNIQUENESS KEY: distinct for every single lesson instance
+              // This prevents grouping, ensuring 1 template = 1 specific lesson on the calendar
+              const key = `${cls.subject}|${cls.teacher}|${cls.room}|${cls.day}|${cls.startTime}|${cls.endTime}`;
+              
               if (!lessonGroups[key]) {
                 lessonGroups[key] = {
                   subject: cls.subject,
                   teacher: cls.teacher,
                   room: cls.room,
+                  day: cls.day, // Capture Day
+                  startTime: cls.startTime, // Capture Time
                   count: 0,
                   totalDuration: 0,
-                  classes: [] // Store references to classes
+                  classes: []
                 };
               }
               
@@ -311,7 +316,8 @@ export default defineComponent({
             });
             
             // Calculate date range and weeks
-            const dates = flatClasses.map(c => c.date ? new Date(c.date) : null).filter(d => d && !isNaN(d.getTime()));
+            // Use T12:00:00 to avoid timezone shifts (e.g. UTC midnight being previous day locally)
+            const dates = flatClasses.map(c => c.date ? new Date(c.date + 'T12:00:00') : null).filter(d => d && !isNaN(d.getTime()));
             let startDate = new Date();
             let endDate = new Date();
             let numberOfWeeks = 1;
@@ -359,7 +365,7 @@ export default defineComponent({
             const groupCounters = {}; // key: groupKey, value: currentOccurrenceIndex
             
             flatClasses.forEach(cls => {
-              const key = `${cls.subject}|${cls.teacher}|${cls.room}`;
+              const key = `${cls.subject}|${cls.teacher}|${cls.room}|${cls.day}|${cls.startTime}|${cls.endTime}`;
               const templateIndex = groupKeys.indexOf(key);
               
               if (groupCounters[key] === undefined) {
@@ -400,73 +406,82 @@ export default defineComponent({
                     };
                 }
             });
-            const exactTimeSlots = Object.values(uniqueSlots).sort((a, b) => a.start.localeCompare(b.start));
+            const toMinutes = (t) => {
+              const [h, m] = t.split(':').map(Number);
+              return h * 60 + m;
+            };
+            const exactTimeSlots = Object.values(uniqueSlots).sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
             console.log('Extracted exact time slots:', exactTimeSlots);
 
-            const lessonTemplates = Object.values(lessonGroups).map(group => {
-              // Build fixedSessions map
-              const fixedSessions = {};
-              // We need to re-find the classes for this group to get their times
-              // This is a bit inefficient but safe. 
-              // Better: store the classes in the group object initially.
-              // Let's assume group.classes exists (we need to add it above)
-              
-              if (group.classes) {
-                 group.classes.forEach((cls, idx) => {
-                    // Calculate week index
-                    const clsDate = new Date(cls.date);
-                    const diffTime = Math.abs(clsDate - startDate);
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-                    // Week index is 0-based
-                    // If start date is Monday, diffDays/7 is correct.
-                    // Let's use a safer approach:
-                    // weekIndex = floor((clsDate - startDate) / 7 days)
-                    const weekIndex = Math.floor((clsDate - startDate) / (1000 * 60 * 60 * 24 * 7));
-                    
-                    // We need to know which occurrence index this is for this week?
-                    // No, the solver iterates occurrence_index 0..sessionsPerWeek
-                    // We need to assign each class to a unique (week, occurrence) slot.
-                    // Let's group by week first.
-                 });
-              }
-              
-              // Revised approach:
-              // 1. Group classes by week
-              // 2. For each week, assign occurrence indices 0, 1, 2...
-              // 3. Populate fixedSessions
-              
-              const classesByWeek = {};
-              if (group.classes) {
-                  group.classes.sort((a, b) => new Date(a.date) - new Date(b.date));
-                  group.classes.forEach(cls => {
-                      const clsDate = new Date(cls.date);
-                      const weekIndex = Math.floor((clsDate - startDate) / (1000 * 60 * 60 * 24 * 7));
-                      if (!classesByWeek[weekIndex]) classesByWeek[weekIndex] = [];
-                      classesByWeek[weekIndex].push(cls);
-                  });
-              }
-              
-              Object.entries(classesByWeek).forEach(([weekIdx, classes]) => {
-                  classes.forEach((cls, occIdx) => {
-                      const key = `${weekIdx}-${occIdx}`;
-                      fixedSessions[key] = {
-                          day: cls.day,
-                          start: cls.startTime,
-                          end: cls.endTime
-                      };
-                  });
-              });
 
+            const lessonTemplates = Object.values(lessonGroups).map(group => {
+              // DON'T create fixedSessions - we want Z3 to rebuild from scratch
+              // Just provide the lesson metadata and let Z3 optimize
+              
               return {
-              subject: group.subject,
-              class: result.data.studentClass || 'My Class', 
-              teacher: group.teacher,
-              preferredRoom: group.room,
-              // Normalize sessions per week based on total weeks
-              sessionsPerWeek: Math.max(1, Math.round(group.count / numberOfWeeks)),
-              durationMinutes: Math.round(group.totalDuration / group.count) || 60,
-              fixedSessions: fixedSessions
-            }});
+                subject: group.subject,
+                class: result.data.studentClass || 'My Class', 
+                teacher: group.teacher,
+                preferredRoom: group.room,
+                sessionsPerWeek: 1, // Always 1 since we ungrouped everything
+                durationMinutes: Math.round(group.totalDuration / group.count) || 60,
+                // LOCK to original time
+                fixedDay: group.day,
+                fixedTime: group.startTime
+              };
+            });
+
+
+            // ========== CAPACITY CHECK: Pre-flight validation ===========
+            // Calculate if schedule is mathematically possible before sending to Z3
+            const totalWeeks = numberOfWeeks;
+            const daysPerWeek = 5; // Monday-Friday
+            const slotsPerDay = exactTimeSlots.length;
+            const availableCapacity = totalWeeks * daysPerWeek * slotsPerDay;
+            
+            const requiredSessions = lessonTemplates.reduce((sum, t) => 
+              sum + (t.sessionsPerWeek * totalWeeks), 0
+            );
+            
+            const utilizationPercent = (requiredSessions / availableCapacity * 100).toFixed(1);
+            const isFeasible = requiredSessions <= availableCapacity;
+            
+            console.log('📊 Schedule Capacity Check:', {
+              totalWeeks,
+              daysPerWeek,
+              slotsPerDay,
+              availableCapacity,
+              requiredSessions,
+              utilizationPercent: utilizationPercent + '%',
+              isFeasible,
+              lessonTemplatesCount: lessonTemplates.length,
+              exactTimeSlotsCount: exactTimeSlots.length
+            });
+            
+            if (!isFeasible) {
+              const overage = requiredSessions - availableCapacity;
+              alert(
+                `⚠️ Schedule has too many lessons!\n\n` +
+                `Required: ${requiredSessions} sessions\n` +
+                `Available: ${availableCapacity} time slots\n` +
+                `Overage: ${overage} sessions (${(overage / availableCapacity * 100).toFixed(1)}%)\n\n` +
+                `The schedule cannot be built because there are more lessons than available time slots.\n\n` +
+                `Suggestions:\n` +
+                `• Reduce the number of lessons per week\n` +
+                `• Increase the time range (start earlier or end later)\n` +
+                `• Extend the number of weeks in the term`
+              );
+              isImporting.value = false;
+              return; // Don't proceed with import
+            }
+            
+            // Warn if utilization is very high (>90%)
+            if (utilizationPercent > 90) {
+              console.warn(`⚠️ High schedule utilization: ${utilizationPercent}% - Z3 may struggle to find solution`);
+            }
+            // ========== END CAPACITY CHECK ===========
+
+
 
             const newSchedule = {
               id: `schoolsoft-${Date.now()}`,
@@ -486,7 +501,9 @@ export default defineComponent({
                 name: 'Imported Term',
                 startDate: startDate.toISOString().split('T')[0], // Use detected start date
                 endDate: endDate.toISOString().split('T')[0], // Use detected end date
-                weeks: numberOfWeeks,
+                // Force a full term (20 weeks) if we imported a short duration (e.g. 1 week view)
+                // This allows the schedule to be reused for the whole semester
+                weeks: numberOfWeeks < 4 ? 20 : numberOfWeeks,
                 days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
                 dailySlots: exactTimeSlots, // Use exact slots for the term
                 useExactSlots: true // Flag to tell ViewerPage to use these slots exactly
@@ -501,37 +518,37 @@ export default defineComponent({
                 endTime: cls.endTime,
                 day: cls.day,
               })),
-              // Add relaxed constraints for imported schedules to ensure Z3 can solve them
-              // Imported schedules often violate strict default rules (e.g. >3 lessons/day for teachers)
+              // Relaxed constraints for imported schedules
+              // IMPORTANT: Don't use bypassConstraints - it causes conflicts!
+              // Instead, use very relaxed limits while keeping conflict prevention
               constraints: {
-                maxClassSessionsPerDay: 10,
-                maxTeacherSessionsPerDay: 10,
-                maxClassIdleMinutes: 480,
-                maxTeacherIdleMinutes: 480,
+                // Very high limits (essentially unlimited)
+                maxClassSessionsPerDay: 20,
+                maxTeacherSessionsPerDay: 20,
+                maxClassIdleMinutes: 999,
+                maxTeacherIdleMinutes: 999,
+                // Disable optimizations
                 disableSubjectSpread: true,
                 disableTransitionBuffers: true,
-                physicalEducationBufferMinutes: 0,
-                // Enable overlap if detected in source data
-                allowClassOverlap: hasOverlaps,
-                // Link simultaneous sessions together
-                simultaneousSessions: simultaneousGroups,
-                // Bypass all standard constraints to trust the fixed times from import
-                bypassConstraints: true,
+                physicalEducationBufferMinutes: 1,
+                // Disable lunch (not needed for imports)
                 lunchBreak: {
                   enabled: false
                 }
+                // bypassConstraints: false (default) - KEEP conflict prevention!
               }
             };
 
             if (window.api.saveSchedule) {
               await window.api.saveSchedule(newSchedule);
               
-              // Navigate to viewer and pass the schedule data so it's immediately available
+              // Navigate to viewer and auto-build the schedule
               window.dispatchEvent(new CustomEvent('navigate', { 
                 detail: { 
                   page: 'viewer',
                   presetId: newSchedule.id,
-                  scheduleData: newSchedule // Pass the schedule data so ViewerPage can load it
+                  scheduleData: newSchedule, // Pass the schedule data so ViewerPage can load it
+                  autoBuild: true // NEW: Auto-trigger schedule building
                 } 
               }));
             }

@@ -300,6 +300,16 @@ export default defineComponent({
       }
       if (dateA) return -1;
       if (dateB) return 1;
+      
+      // Handle day names
+      const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      const indexA = days.indexOf(a.toLowerCase());
+      const indexB = days.indexOf(b.toLowerCase());
+      
+      if (indexA !== -1 && indexB !== -1) {
+        return indexA - indexB;
+      }
+      
       return a.localeCompare(b);
     };
     const ensureDayBuckets = (dayList) => {
@@ -417,6 +427,14 @@ export default defineComponent({
       days.value.forEach((day, index) => {
         const dayEntries = Array.isArray(incoming[day]) ? incoming[day] : [];
         schedules[day] = dayEntries.map((entry, entryIndex) => coerceScheduleEntry(entry, fallbackBase + index + entryIndex));
+        
+        if (day.toLowerCase() === 'monday') {
+          console.log('[SimpleSchedule] Populated Monday schedule:', {
+            day,
+            entriesCount: schedules[day].length,
+            entries: JSON.parse(JSON.stringify(schedules[day]))
+          });
+        }
       });
 
       if (!days.value.includes(selectedDay.value)) {

@@ -661,7 +661,7 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
 
     raw_pe_buffer = constraints_cfg.get("physicalEducationBufferMinutes")
     if raw_pe_buffer is not None:
-        physical_education_buffer = _coerce_positive_int(
+        physical_education_buffer = _coerce_non_negative_int(
             raw_pe_buffer, "constraints.physicalEducationBufferMinutes"
         )
     else:
@@ -1224,7 +1224,7 @@ def _solve_structured(data: Dict[str, Any], *, debug: bool = False) -> Dict[str,
     
     if bypass_constraints:
         if debug_enabled:
-            print("DEBUG: bypassConstraints is enabled. Skipping standard constraints.")
+            print("DEBUG: bypassConstraints is enabled. Skipping standard constraints.", file=sys.stderr)
         # We still need to ensure valid bounds for variables, which is done above.
         # We just skip the conflict/limit logic below.
         pass

@@ -11,6 +11,8 @@ async function parseSchoolSoft({ html, url }) {
 
         const $ = cheerio.load(html);
         const classes = [];
+        const teachersMap = new Map(); // Track unique teachers
+        const studentsMap = new Map(); // Track unique students/groups
 
         // Find all lesson blocks
         const lessons = $('.cal-lesson');
@@ -46,9 +48,12 @@ async function parseSchoolSoft({ html, url }) {
                 let endTime = '00:00';
                 let subject = 'Unknown';
 
+                // Helper to padlock times (8:30 -> 08:30)
+                const padTime = (t) => t.split(':').map(p => p.padStart(2, '0')).join(':');
+
                 if (headerMatch) {
-                    startTime = headerMatch[1];
-                    endTime = headerMatch[2];
+                    startTime = padTime(headerMatch[1]);
+                    endTime = padTime(headerMatch[2]);
                     subject = headerMatch[3];
                 } else {
                     // Fallback: Try to get text from the box
@@ -56,8 +61,8 @@ async function parseSchoolSoft({ html, url }) {
                     // Try to parse "8:30-9:50 SUBJECT"
                     const textMatch = text.match(/(\d{1,2}:\d{2})-(\d{1,2}:\d{2})\s+(.*)/);
                     if (textMatch) {
-                        startTime = textMatch[1];
-                        endTime = textMatch[2];
+                        startTime = padTime(textMatch[1]);
+                        endTime = padTime(textMatch[2]);
                         subject = textMatch[3];
                     } else {
                         if (i === 0) console.log('DEBUG: Could not parse header or text box');
@@ -75,9 +80,49 @@ async function parseSchoolSoft({ html, url }) {
                 const group = groupMatch ? groupMatch[1].trim() : '';
 
                 // Determine Day of Week from Date
-                const dateObj = new Date(dateStr);
+                // Use T12:00:00 to avoid timezone shifts
+                const dateObj = new Date(dateStr + 'T12:00:00');
                 const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
                 const dayName = days[dateObj.getDay()];
+
+                // Track unique teachers
+                if (teacher && teacher !== '-' && teacher.length > 0) {
+                    // Parse teacher initials/names (e.g., "JN", "AB, CD", etc.)
+                    const teacherParts = teacher.split(/[,;]/).map(t => t.trim()).filter(Boolean);
+                    teacherParts.forEach(t => {
+                        if (!teachersMap.has(t)) {
+                            teachersMap.set(t, {
+                                initials: t,
+                                subjects: new Set(),
+                                classes: new Set()
+                            });
+                        }
+                        const teacherData = teachersMap.get(t);
+                        teacherData.subjects.add(subject);
+                        if (group) teacherData.classes.add(group);
+                    });
+                }
+
+                // Track student groups/classes
+                if (group && group !== '-' && group.length > 0) {
+                    // Parse groups (e.g., "TE23A", "NA22B")
+                    const groupTokens = group.split(/[\s,;]+/).filter(Boolean);
+                    groupTokens.forEach(g => {
+                        // Check if it looks like a class code (2-6 chars, starts with letter)
+                        if (/^[A-Z][A-Z0-9]{1,5}$/.test(g)) {
+                            if (!studentsMap.has(g)) {
+                                studentsMap.set(g, {
+                                    className: g,
+                                    subjects: new Set(),
+                                    teachers: new Set()
+                                });
+                            }
+                            const studentData = studentsMap.get(g);
+                            studentData.subjects.add(subject);
+                            if (teacher) studentData.teachers.add(teacher);
+                        }
+                    });
+                }
 
                 classes.push({
                     subject: subject,
@@ -140,11 +185,30 @@ async function parseSchoolSoft({ html, url }) {
         }
         console.log('DEBUG: Found student class:', studentClass);
 
+        // Convert teachers map to array
+        const teachers = Array.from(teachersMap.entries()).map(([initials, data]) => ({
+            initials,
+            subjects: Array.from(data.subjects),
+            classes: Array.from(data.classes)
+        }));
+
+        // Convert students map to array
+        const studentGroups = Array.from(studentsMap.entries()).map(([className, data]) => ({
+            className,
+            subjects: Array.from(data.subjects),
+            teachers: Array.from(data.teachers)
+        }));
+
+        console.log(`DEBUG: Extracted ${teachers.length} unique teachers`);
+        console.log(`DEBUG: Extracted ${studentGroups.length} unique student groups`);
+
         return {
             success: true,
             data: {
                 classes,
-                studentClass
+                studentClass,
+                teachers, // NEW: Array of teacher data
+                studentGroups // NEW: Array of student group/class data
             }
         };
     } catch (error) {

@@ -10,7 +10,7 @@
       ></div>
     </div>
     <HomePage v-if="currentPage === 'home'" />
-    <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" :saved-state="viewerPageState" @save-state="handleViewerPageStateSave" />
+    <ViewerPage v-else-if="currentPage === 'viewer'" :preset-id="selectedPresetId" :initial-data="mockData" :saved-state="viewerPageState" :auto-build="autoBuildFlag" @save-state="handleViewerPageStateSave" />
     <SchoolSoftLogin v-else-if="currentPage === 'schoolsoft-login'" />
     <SchoolSoftPreview v-else-if="currentPage === 'schoolsoft-preview'" :initial-data="scrapedData" />
     <ConstraintsPage v-else-if="currentPage === 'constraints'" :solver-options="constraintsSolverOptions" :preset-id="selectedPresetId" :custom-constraints="constraintsCustomConstraints" :time-slots="globalTimeSlots" />
@@ -50,6 +50,9 @@ export default defineComponent({
     // Store time slots globally so both ViewerPage and ConstraintsPage can access
     const globalTimeSlots = ref([]);
     const globalTimeSlotsPresetId = ref(null);
+    
+    // Auto-build flag for ViewerPage (triggered by SchoolSoft import)
+    const autoBuildFlag = ref(false);
     
     // Store ViewerPage state globally so it persists when navigating to/from ConstraintsPage
     const viewerPageState = ref(null);
@@ -150,6 +153,12 @@ export default defineComponent({
         selectedPresetId.value = event.detail.presetId || null;
         // Capture scheduleData from SchoolSoft import OR mockData from other sources
         mockData.value = event.detail.scheduleData || event.detail.mockData || null;
+        
+        // Capture autoBuild flag if present (triggered by SchoolSoft import)
+        autoBuildFlag.value = !!event.detail.autoBuild;
+        if (autoBuildFlag.value) {
+          console.log('[App] Auto-build flag set from navigation event');
+        }
         if (event.detail.scrapedData) {
           scrapedData.value = event.detail.scrapedData;
         }
@@ -311,7 +320,17 @@ export default defineComponent({
         
         return weekdays.map(day => {
           if (existingMap.has(day)) {
-            return { day, ...existingMap.get(day) };
+            const slot = existingMap.get(day);
+            // CRITICAL FIX: Detect and repair corrupted Monday slot (15:15 start)
+            // This specific value (15:15) causes all Monday lessons to be filtered out
+            if (day === 'Monday' && slot.start === '15:15') {
+              console.warn('[App] Detected corrupted Monday time slot (15:15). Resetting to default 08:00.', {
+                original: slot,
+                newStart: defaultStart
+              });
+              return { day, start: defaultStart, end: defaultEnd };
+            }
+            return { day, ...slot };
           }
           return { day, start: defaultStart, end: defaultEnd };
         });
@@ -336,7 +355,9 @@ export default defineComponent({
           // If we're on the constraints page, always update (it's a save from ConstraintsPage)
           // Otherwise, only update if we don't have time slots for this preset yet
           // This prevents ViewerPage state restoration from overwriting saved time slots
+          // UNLESS force flag is set (e.g. from fresh import)
           const shouldUpdate = currentPage.value === 'constraints' || 
+                                event.detail.force || 
                                 !globalTimeSlots.value || 
                                 globalTimeSlots.value.length === 0 ||
                                 globalTimeSlotsPresetId.value !== presetId;
@@ -467,6 +488,7 @@ export default defineComponent({
       viewerPageState,
       handleViewerPageStateSave,
       bubbles,
+      autoBuildFlag,
     };
   },
 });

@@ -207,7 +207,7 @@
                 :disabled="!isBuildReady || isBuilding"
               >
                 <span class="build-icon">⚙</span>
-                <span>{{ isBuilding ? 'Running solver…' : 'Build with Z3' }}</span>
+                <span>{{ isBuilding ? 'Running solver…' : 'Build Schedule' }}</span>
               </button>
               <p class="build-hint">
                 Add at least one item in each category, then run the solver to generate a baseline timetable.
@@ -295,6 +295,10 @@ export default defineComponent({
     savedState: {
       type: Object,
       default: null,
+    },
+    autoBuild: {
+      type: Boolean,
+      default: false,
     },
   },
   emits: ['save-state'],
@@ -605,10 +609,9 @@ export default defineComponent({
               normalized.allowedRooms = allowedRooms;
             }
             
-            // CRITICAL: Preserve fixedSessions for SchoolSoft imports (hybrid mode)
-            if (template?.fixedSessions && typeof template.fixedSessions === 'object') {
-              normalized.fixedSessions = { ...template.fixedSessions };
-            }
+            // DON'T preserve fixedSessions - we want Z3 to rebuild from scratch
+            // Old schedules may have them in the file, but we ignore them now
+            // This allows both new and old schedules to be rebuilt by Z3
 
             return normalized;
           })
@@ -622,11 +625,11 @@ export default defineComponent({
       timeSlots.value = sanitizeTimeSlots(data.timeSlots);
       
       // Sync to global state
-      if (timeSlots.value.length > 0) {
-        window.dispatchEvent(new CustomEvent('time-slots-updated', {
-          detail: { timeSlots: timeSlots.value, presetId: props.presetId }
-        }));
-      }
+      // Always emit update, even if empty, to ensure global state is cleared when loading imports (like SchoolSoft)
+      window.dispatchEvent(new CustomEvent('time-slots-updated', {
+        detail: { timeSlots: timeSlots.value, presetId: props.presetId, force: true }
+      }));
+
       
       termConfig.value = sanitizeTerm(data.term);
       lessonTemplates.value = sanitizeLessonTemplatesData(data.lessonTemplates);
@@ -703,7 +706,15 @@ export default defineComponent({
           });
         });
         
+
         generatedSchedule.value = normalizeScheduleResult(scheduleByDay);
+        
+        console.log('[ViewerPage] DATA TRACE - Generated Schedule:', {
+          keys: Object.keys(generatedSchedule.value),
+          mondayEntryCount: generatedSchedule.value['Monday'] ? generatedSchedule.value['Monday'].length : 0,
+          mondaySample: generatedSchedule.value['Monday'] ? generatedSchedule.value['Monday'][0] : 'N/A'
+        });
+
         schedule.value = generatedSchedule.value;
         // Also preserve it for mode switching
         preservedSchedule.value = JSON.parse(JSON.stringify(generatedSchedule.value));
@@ -717,8 +728,43 @@ export default defineComponent({
         resetSolverState();
       }
       
+      // DEBUG: Dump data to file to inspect Monday issue
+      setTimeout(() => {
+        const debugData = {
+           generatedSchedule: generatedSchedule.value,
+           originalBlocks: originalBlocks.value,
+           timeSlots: timeSlots.value,
+           termConfig: termConfig.value,
+           rawMonday: generatedSchedule.value ? generatedSchedule.value['Monday'] : 'N/A'
+        };
+        console.log('[ViewerPage] Dumping debug data to file...');
+        if (window.api && window.api.saveSchedule) {
+           // Reuse saveSchedule but with a special ID to dump debug info
+           window.api.saveSchedule({
+              id: 'debug_dump',
+              name: 'Debug Dump',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              blocks: [], // placeholder
+              debugData: JSON.stringify(debugData) // Embed as string to preserve structure
+           }).then(() => console.log('[ViewerPage] Debug dump saved to debug_dump.json'));
+        }
+      }, 2000);
+      
+      // CRITICAL: Load constraints from imported schedule
+      // SchoolSoft imports use relaxed constraints (NOT bypassConstraints - that causes conflicts)
+      // Without this, Z3 uses strict defaults and fails
+      if (data.constraints && typeof data.constraints === 'object') {
+        customConstraints.value = JSON.parse(JSON.stringify(data.constraints));
+        console.log('[ViewerPage] Loaded constraints from schedule data', {
+          bypassConstraints: customConstraints.value.bypassConstraints,
+          constraintKeys: Object.keys(customConstraints.value)
+        });
+      }
+      
       selectedClassFilter.value = 'All Classes';
     };
+
 
     const normalizeScheduleResult = (scheduleByDay = {}) => {
       const normalized = {};
@@ -763,7 +809,7 @@ export default defineComponent({
         // Convert ISO date to day name if needed
         const dayName = isoDateRegex.test(dayKey) ? isoDateToDayName(dayKey) : dayKey;
         const dayTimeSlot = dayName ? timeSlotsMap[dayName] : null;
-        
+
         const filteredEntries = entries.filter((entry) => {
           // If we have time slots for this day, filter by them
           if (dayTimeSlot) {
@@ -1370,6 +1416,7 @@ export default defineComponent({
       Object.keys(scheduleByDay).forEach(dayKey => {
         scheduleByDay[dayKey].sort((a, b) => a.startMinutes - b.startMinutes);
       });
+
       
       console.log('[ViewerPage] Blocks conversion complete', {
         totalDays: Object.keys(scheduleByDay).length,
@@ -1539,49 +1586,28 @@ export default defineComponent({
         return;
       }
 
-      // ========== HYBRID MODE: Detect and Route ===========
-      // Check if this is an imported schedule with fixed sessions
-      const hasFixedSessions = lessonTemplates.value.some(template => 
-        template.fixedSessions && Object.keys(template.fixedSessions).length > 0
+      // All schedules (including imports) will now be processed by Z3 solver
+      // Enhanced diagnostics to help debug SchoolSoft import issues
+      const totalSessions = lessonTemplates.value.reduce((sum, t) => 
+        sum + (t.sessionsPerWeek * (termConfig.value?.weeks || 1)), 0
       );
+      const hasFixedSessions = lessonTemplates.value.some(t => 
+        t.fixedSessions && Object.keys(t.fixedSessions).length > 0
+      );
+      const fixedSessionsCount = lessonTemplates.value.reduce((sum, t) => 
+        sum + (t.fixedSessions ? Object.keys(t.fixedSessions).length : 0), 0
+      );
+      
+      console.log('[ViewerPage] 🔧 Sending schedule to Z3 solver - Diagnostics:', {
+        templatesCount: lessonTemplates.value.length,
+        totalWeeks: termConfig.value?.weeks || 1,
+        totalSessions,
+        hasFixedSessions,
+        fixedSessionsCount,
+        timeSlotsCount: slotsToUse.length,
+        bypassConstraints: customConstraints.value?.bypassConstraints || false
+      });
 
-      if (hasFixedSessions) {
-        console.log('[ViewerPage] 🚀 HYBRID MODE: Detected fixedSessions - bypassing Z3, converting directly', {
-          templatesCount: lessonTemplates.value.length,
-          fixedTemplatesCount: lessonTemplates.value.filter(t => t.fixedSessions && Object.keys(t.fixedSessions).length > 0).length,
-          totalFixedSessions: lessonTemplates.value.reduce((sum, t) => sum + (t.fixedSessions ? Object.keys(t.fixedSessions).length : 0), 0)
-        });
-
-        // Update loading message for direct conversion
-        progressMessage.value = 'Converting imported schedule...';
-
-        try {
-          await convertFixedSessionsToSchedule();
-          finishSolverLoading();
-          
-          // Auto-save schedule after successful conversion
-          await saveScheduleToFile();
-          
-          console.log('[ViewerPage] ✅ HYBRID MODE: Schedule converted successfully (Z3 skipped)', {
-            daysCount: Object.keys(generatedSchedule.value || {}).length,
-            sessionsCount: Object.values(generatedSchedule.value || {}).reduce((sum, day) => sum + day.length, 0)
-          });
-          
-          isBuilding.value = false;
-          return; // Exit early - no need to run Z3
-        } catch (error) {
-          console.error('[ViewerPage] ❌ HYBRID MODE: Fixed sessions conversion failed:', error);
-          solverError.value = `Failed to convert imported schedule: ${error.message}. Please try re-importing.`;
-          cancelSolverLoading();
-          isBuilding.value = false;
-          return;
-        }
-      } else {
-        console.log('[ViewerPage] 🔧 STANDARD MODE: No fixedSessions detected - using Z3 solver', {
-          templatesCount: lessonTemplates.value.length
-        });
-      }
-      // ========== END HYBRID MODE ROUTING ===========
 
 
       const payload = {
@@ -1593,16 +1619,41 @@ export default defineComponent({
       };
 
       if (termConfig.value) {
-        // Use timeSlots to create one big dailySlot (matching the previous system)
-        // The solver will apply this slot to all days, but we filter the display based on day-specific time slots
-        // This approach is more efficient and prevents the solver from getting stuck with too many slot combinations
         let dailySlotsToUse = [];
         
-        // Check if we should use exact slots (e.g. from SchoolSoft import)
-        if (payload.term && payload.term.useExactSlots && payload.term.dailySlots) {
-           console.log('[ViewerPage] Using exact daily slots from term configuration');
-           dailySlotsToUse = payload.term.dailySlots;
-        } else if (slotsToUse.length > 0) {
+        // 1. Start with configured daily slots if available (e.g. from SchoolSoft import)
+        // We check termConfig.value directly because payload.term is not yet assigned
+        if (termConfig.value.dailySlots && termConfig.value.dailySlots.length > 0) {
+           console.log('[ViewerPage] Using daily slots from term configuration', { count: termConfig.value.dailySlots.length });
+           dailySlotsToUse = [...termConfig.value.dailySlots];
+        }
+
+        // 2. Safety Net: Ensure all fixed session times are included
+        // This is CRITICAL for SchoolSoft imports to prevent solver timeouts
+        // If a fixed lesson has a time (e.g. 08:00) that isn't in dailySlots, the solver constraints conflict and hang
+        if (lessonTemplates.value && lessonTemplates.value.length > 0) {
+            let addedCount = 0;
+            lessonTemplates.value.forEach(template => {
+                if (template.fixedSessions) {
+                    Object.values(template.fixedSessions).forEach(session => {
+                        if (session.start && session.end) {
+                             // Check if this slot already exists (exact match)
+                             const exists = dailySlotsToUse.some(s => s.start === session.start && s.end === session.end);
+                             if (!exists) {
+                                 dailySlotsToUse.push({ start: session.start, end: session.end });
+                                 addedCount++;
+                             }
+                        }
+                    });
+                }
+            });
+            if (addedCount > 0) {
+                console.log('[ViewerPage] Added missing unique slots from fixed sessions', { addedCount, total: dailySlotsToUse.length });
+            }
+        }
+
+        // 3. Fallback: Generate generic slots if we still have none
+        if (dailySlotsToUse.length === 0 && slotsToUse.length > 0) {
           // Find the earliest start and latest end across all days
           // This creates one big slot that spans all working hours
           // The display will filter events based on day-specific time slots
@@ -1625,8 +1676,6 @@ export default defineComponent({
             }
           });
           
-          // Create multiple slots from earliest start to latest end
-          // The solver needs multiple slots to schedule multiple lessons per day
           // Find the maximum lesson duration to ensure slots are large enough
           let maxLessonDuration = 60; // Default to 60 minutes
           if (lessonTemplates.value && lessonTemplates.value.length > 0) {
@@ -1642,7 +1691,6 @@ export default defineComponent({
           const slotDuration = Math.max(60, Math.ceil(maxLessonDuration / 5) * 5);
           
           if (earliestStart !== null && latestEnd !== null && latestEnd > earliestStart) {
-            const slots = [];
             let currentStart = earliestStart;
             
             while (currentStart + slotDuration <= latestEnd) {
@@ -1655,33 +1703,12 @@ export default defineComponent({
               const slotStartTime = `${String(slotStartHours).padStart(2, '0')}:${String(slotStartMins).padStart(2, '0')}`;
               const slotEndTime = `${String(slotEndHours).padStart(2, '0')}:${String(slotEndMins).padStart(2, '0')}`;
               
-              slots.push({
+              dailySlotsToUse.push({
                 start: slotStartTime,
-                end: slotEndTime
+                end: slotEndTime,
               });
               
-              currentStart += slotDuration;
-            }
-            
-            if (slots.length > 0) {
-              dailySlotsToUse = slots;
-              
-              console.log('[ViewerPage] Created multiple dailySlots from timeSlots', {
-                timeSlotsCount: slotsToUse.length,
-                dailySlotsCount: slots.length,
-                slotDurationMinutes: slotDuration,
-                maxLessonDurationMinutes: maxLessonDuration,
-                timeRange: `${Math.floor(earliestStart/60)}:${String(earliestStart%60).padStart(2,'0')} - ${Math.floor(latestEnd/60)}:${String(latestEnd%60).padStart(2,'0')}`,
-                slotsPerDay: slots.length,
-                note: `Slots sized to accommodate lessons up to ${maxLessonDuration} minutes`
-              });
-            } else {
-              console.error('[ViewerPage] Could not create dailySlots from timeSlots - time range too short', {
-                earliestStart,
-                latestEnd,
-                duration: latestEnd - earliestStart,
-                timeSlotsCount: slotsToUse.length
-              });
+              currentStart += Math.max(15, Math.floor(slotDuration / 2)); // 50% overlap
             }
           } else {
             console.error('[ViewerPage] Could not create dailySlot from timeSlots', {
@@ -1745,10 +1772,9 @@ export default defineComponent({
           if (Array.isArray(template.allowedRooms) && template.allowedRooms.length > 0) {
             cloned.allowedRooms = [...template.allowedRooms];
           }
-          // CRITICAL: Include fixedSessions for imported schedules
-          if (template.fixedSessions && Object.keys(template.fixedSessions).length > 0) {
-            cloned.fixedSessions = { ...template.fixedSessions };
-          }
+          // DON'T include fixedSessions - we want Z3 to rebuild from scratch
+          // fixedSessions constrain Z3 to exact times, preventing optimization
+          // For rebuilding imported schedules, we only use the lesson metadata
           return cloned;
         });
       }
@@ -2804,6 +2830,37 @@ export default defineComponent({
       { immediate: true, deep: true }
     );
 
+    onMounted(() => {
+      logInfo('VIEW_MOUNTED', { presetId: props.presetId });
+      
+      // Listen for time slots updates from ConstraintsPage
+      window.addEventListener('time-slots-updated-viewer', handleTimeSlotsUpdate);
+      
+      // Handle initial data and state restoration
+      if (props.initialData) {
+        console.log('[ViewerPage] Applying initial data', { presetId: props.presetId });
+        applyInitialData(props.initialData);
+        
+        // **NEW: Auto-build if autoBuild flag is set (from SchoolSoft import)**
+        if (props.autoBuild) {
+          console.log('[ViewerPage] Auto-build triggered after SchoolSoft import');
+          nextTick(() => {
+            buildWithSolver();
+          });
+        }
+      } else if (props.presetId) {
+        console.log('[ViewerPage] No initialData, checking for savedState or loading schedule', { 
+          presetId: props.presetId,
+          hasSavedState: !!props.savedState
+        });
+        if (props.savedState && props.savedState.presetId === props.presetId) {
+          restoreState();
+        } else {
+          loadSchedule(props.presetId);
+        }
+      }
+    });
+
     // Listen for time slots updates from ConstraintsPage
     const handleTimeSlotsUpdate = (event) => {
       try {
@@ -3229,6 +3286,17 @@ export default defineComponent({
       window.addEventListener('constraints-updated', handleConstraintsUpdate);
       window.addEventListener('constraints-updated-viewer', handleConstraintsUpdateFromApp);
       window.addEventListener('time-slots-updated-viewer', handleTimeSlotsUpdate);
+      
+      // Add listener for sidebar requesting schedule data (for teacher schedules)
+      const handleScheduleDataRequest = () => {
+        // Send current schedule/blocks data to sidebar
+        window.dispatchEvent(new CustomEvent('schedule-data-response', {
+          detail: {
+            classes: originalBlocks.value || []
+          }
+        }));
+      };
+      window.addEventListener('request-schedule-data', handleScheduleDataRequest);
       
       // Request stored time slots from App.vue first (they might be more recent from ConstraintsPage)
       // This should happen before restoreState so that restoreState can check if we have global time slots
