@@ -1740,10 +1740,34 @@ export default defineComponent({
         const existingMap = new Map();
         if (Array.isArray(existingSlots)) {
           existingSlots.forEach(slot => {
-            if (slot && slot.day) {
-              const normalizedDay = normalizeDayName(slot.day);
+            if (slot) {
+              // Ensure day is normalized (default to Monday if missing, just like sanitizeTimeSlots)
+              const normalizedDay = normalizeDayName(slot.day || 'Monday');
+              
               if (normalizedDay && slot.start && slot.end) {
-                existingMap.set(normalizedDay, { start: slot.start, end: slot.end });
+                if (existingMap.has(normalizedDay)) {
+                  // Merge with existing slot: take earliest start and latest end
+                  const existing = existingMap.get(normalizedDay);
+                  const existingStartMins = parseTimeStringToMinutes(existing.start);
+                  const existingEndMins = parseTimeStringToMinutes(existing.end);
+                  const newStartMins = parseTimeStringToMinutes(slot.start);
+                  const newEndMins = parseTimeStringToMinutes(slot.end);
+                  
+                  // Only valid times
+                  if (existingStartMins !== null && existingEndMins !== null && 
+                      newStartMins !== null && newEndMins !== null) {
+                    
+                    const minStart = Math.min(existingStartMins, newStartMins);
+                    const maxEnd = Math.max(existingEndMins, newEndMins);
+                    
+                    existingMap.set(normalizedDay, {
+                      start: formatMinutesToTime(minStart),
+                      end: formatMinutesToTime(maxEnd)
+                    });
+                  }
+                } else {
+                  existingMap.set(normalizedDay, { start: slot.start, end: slot.end });
+                }
               }
             }
           });

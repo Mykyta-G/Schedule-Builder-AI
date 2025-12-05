@@ -299,6 +299,22 @@ export default defineComponent({
         return dayMap[day.trim().toLowerCase()] || 'Monday';
       };
 
+      // Helper function to parse time "HH:MM" to minutes
+      const parseTimeStringToMinutes = (timeStr) => {
+        if (!timeStr || typeof timeStr !== 'string') return null;
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        if (isNaN(hours) || isNaN(minutes)) return null;
+        return hours * 60 + minutes;
+      };
+
+      // Helper function to format minutes back to "HH:MM"
+      const formatMinutesToTime = (minutes) => {
+        if (minutes === null || isNaN(minutes)) return '';
+        const h = Math.floor(minutes / 60);
+        const m = minutes % 60;
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+      };
+
       // Helper function to normalize time slots to fixed 5-day structure
       const normalizeTimeSlots = (slots, defaultStart = '08:00', defaultEnd = '16:30') => {
         if (!Array.isArray(slots) || slots.length === 0) {
@@ -310,27 +326,41 @@ export default defineComponent({
         const existingMap = new Map();
         
         slots.forEach(slot => {
-          if (slot && slot.day) {
-            const normalizedDay = normalizeDayName(slot.day);
+          if (slot) {
+            // Ensure day is normalized (default to Monday if missing, just like sanitizeTimeSlots)
+            const normalizedDay = normalizeDayName(slot.day || 'Monday');
+            
             if (normalizedDay && slot.start && slot.end) {
-              existingMap.set(normalizedDay, { start: slot.start, end: slot.end });
+              if (existingMap.has(normalizedDay)) {
+                // Merge with existing slot: take earliest start and latest end
+                const existing = existingMap.get(normalizedDay);
+                const existingStartMins = parseTimeStringToMinutes(existing.start);
+                const existingEndMins = parseTimeStringToMinutes(existing.end);
+                const newStartMins = parseTimeStringToMinutes(slot.start);
+                const newEndMins = parseTimeStringToMinutes(slot.end);
+                
+                // Only valid times
+                if (existingStartMins !== null && existingEndMins !== null && 
+                    newStartMins !== null && newEndMins !== null) {
+                  
+                  const minStart = Math.min(existingStartMins, newStartMins);
+                  const maxEnd = Math.max(existingEndMins, newEndMins);
+                  
+                  existingMap.set(normalizedDay, {
+                    start: formatMinutesToTime(minStart),
+                    end: formatMinutesToTime(maxEnd)
+                  });
+                }
+              } else {
+                existingMap.set(normalizedDay, { start: slot.start, end: slot.end });
+              }
             }
           }
         });
         
         return weekdays.map(day => {
           if (existingMap.has(day)) {
-            const slot = existingMap.get(day);
-            // CRITICAL FIX: Detect and repair corrupted Monday slot (15:15 start)
-            // This specific value (15:15) causes all Monday lessons to be filtered out
-            if (day === 'Monday' && slot.start === '15:15') {
-              console.warn('[App] Detected corrupted Monday time slot (15:15). Resetting to default 08:00.', {
-                original: slot,
-                newStart: defaultStart
-              });
-              return { day, start: defaultStart, end: defaultEnd };
-            }
-            return { day, ...slot };
+            return { day, ...existingMap.get(day) };
           }
           return { day, start: defaultStart, end: defaultEnd };
         });
