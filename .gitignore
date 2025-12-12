@@ -149,3 +149,5 @@ schedules.db-*
 !package-lock.json
 !tsconfig.json
 !jsconfig.json
+
+debug_schoolsoft.html

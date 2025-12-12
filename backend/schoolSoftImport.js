@@ -14,9 +14,12 @@ async function importFromSchoolSoft(event, parsedData) {
             students: 0
         };
 
-        // Import teachers
+        // Import teachers - import ALL teachers found
         if (teachers && Array.isArray(teachers)) {
+            console.log(`Importing ${teachers.length} teachers...`);
             for (const teacherData of teachers) {
+                if (!teacherData || !teacherData.initials) continue;
+                
                 // Check if teacher already exists
                 const existing = db.exec(
                     'SELECT id FROM teachers WHERE employeeId = ?',
@@ -27,6 +30,19 @@ async function importFromSchoolSoft(event, parsedData) {
                     // Create new teacher
                     const id = `teacher-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
                     const now = new Date().toISOString();
+                    
+                    // Extract first and last name if fullName is available
+                    let firstName = teacherData.initials;
+                    let lastName = '';
+                    if (teacherData.fullName) {
+                        const nameParts = teacherData.fullName.trim().split(/\s+/);
+                        if (nameParts.length > 1) {
+                            firstName = nameParts[0];
+                            lastName = nameParts.slice(1).join(' ');
+                        } else {
+                            firstName = nameParts[0];
+                        }
+                    }
 
                     db.run(
                         `INSERT INTO teachers (
@@ -34,25 +50,67 @@ async function importFromSchoolSoft(event, parsedData) {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                         [
                             id,
-                            teacherData.initials, // Use initials as first name for now
-                            '',
+                            firstName,
+                            lastName,
                             teacherData.initials,
-                            JSON.stringify(teacherData.subjects),
-                            JSON.stringify(teacherData.subjects),
+                            JSON.stringify(teacherData.subjects || []),
+                            JSON.stringify(teacherData.subjects || []),
                             now,
                             now
                         ]
                     );
                     imported.teachers++;
+                } else {
+                    // Update existing teacher with new subjects/classes if needed
+                    const existingId = existing[0].values[0][0];
+                    const existingTeacher = db.exec('SELECT * FROM teachers WHERE id = ?', [existingId]);
+                    if (existingTeacher.length && existingTeacher[0].values.length) {
+                        // Could update subjects here if needed
+                    }
                 }
             }
+            console.log(`Imported ${imported.teachers} new teachers`);
         }
 
-        // Import student class/group as a reference
-        // For now, we'll just log it - in a real system, this would create student records
+        // Import student classes/groups
+        // For principals/teachers, import ALL student classes found
         if (studentGroups && Array.isArray(studentGroups)) {
-            console.log(`Found ${studentGroups.length} student groups:`, studentGroups.map(g => g.className));
-            imported.students = studentGroups.length;
+            console.log(`Importing ${studentGroups.length} student classes/groups...`);
+            for (const groupData of studentGroups) {
+                if (!groupData || !groupData.className) continue;
+                
+                // Check if a student with this class name already exists
+                // (We're treating class names as identifiers for now)
+                const existing = db.exec(
+                    'SELECT id FROM students WHERE programId = ? OR programName = ?',
+                    [groupData.className, groupData.className]
+                );
+
+                if (!existing.length || !existing[0].values.length) {
+                    // Create a placeholder student record for this class
+                    // In a real system, you'd want to import individual students
+                    const id = `student-class-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                    const now = new Date().toISOString();
+
+                    db.run(
+                        `INSERT INTO students (
+              id, firstName, lastName, programId, programName, currentYear, createdAt, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            id,
+                            groupData.className, // Use class name as identifier
+                            'Class',
+                            groupData.className,
+                            groupData.fullName || groupData.className,
+                            1, // Default year
+                            now,
+                            now
+                        ]
+                    );
+                    imported.students++;
+                }
+            }
+            console.log(`Imported ${imported.students} new student classes/groups`);
         }
 
         await saveDatabase();

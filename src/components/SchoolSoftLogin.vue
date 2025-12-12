@@ -194,6 +194,18 @@ export default defineComponent({
       
       const isLoginPage = loginPatterns.some(pattern => url.includes(pattern));
       
+      // Special handling for principal/teacher pages - be more lenient
+      const isPrincipalOrTeacher = url.includes('right_teacher_startpage.jsp') || 
+                                   url.includes('right_principal_startpage.jsp') ||
+                                   url.includes('/teacher/') ||
+                                   url.includes('/principal/') ||
+                                   url.includes('/rektor/');
+      
+      // For principals/teachers, if URL contains their startpage, definitely logged in
+      if (isPrincipalOrTeacher && !isLoginPage) {
+        return true;
+      }
+      
       // If not a login page and on a school's domain, assume logged in
       // We'll verify by checking page content
       return !isLoginPage;
@@ -204,15 +216,113 @@ export default defineComponent({
       if (!webview.value) return false;
       
       try {
-        // Check if schedule elements exist on the page
-        const hasSchedule = await webview.value.executeJavaScript(`
+        const url = webview.value.getURL();
+        
+        // First, check URL patterns for logged-in pages
+        // SchoolSoft uses patterns like: right_student_startpage.jsp, right_teacher_startpage.jsp, right_principal_startpage.jsp
+        const loggedInUrlPatterns = [
+          'right_student_startpage.jsp',
+          'right_teacher_startpage.jsp',
+          'right_principal_startpage.jsp',
+          'right_',
+          'startpage.jsp'
+        ];
+        
+        const urlIndicatesLoggedIn = loggedInUrlPatterns.some(pattern => url.includes(pattern));
+        
+        // Check page content for logged-in indicators
+        const pageChecks = await webview.value.executeJavaScript(`
           (function() {
-            const lessons = document.querySelectorAll('.cal-lesson');
-            return lessons.length > 0;
+            // Check for student schedule elements
+            const studentLessons = document.querySelectorAll('.cal-lesson');
+            
+            // Check for alternative schedule/calendar elements (teacher/principal pages might use different selectors)
+            const calendarElements = document.querySelectorAll('.calendar, .schedule, [class*="cal-"], [class*="schedule"]');
+            
+            // Check for navigation menus (indicates logged-in dashboard)
+            const navMenus = document.querySelectorAll('nav, .navigation, [class*="nav"], [class*="menu"]');
+            
+            // Check for absence of login forms
+            const loginForms = document.querySelectorAll('form[action*="login"], form[action*="Login"], input[type="password"]');
+            
+            // Check for user-specific content (not login page)
+            const userContent = document.querySelectorAll('[class*="user"], [class*="profile"], [id*="user"]');
+            
+            return {
+              hasStudentSchedule: studentLessons.length > 0,
+              hasCalendarElements: calendarElements.length > 0,
+              hasNavMenus: navMenus.length > 0,
+              hasNoLoginForms: loginForms.length === 0,
+              hasUserContent: userContent.length > 0
+            };
           })();
         `);
         
-        return hasSchedule;
+        // If URL indicates logged-in page, be more lenient with content checks
+        if (urlIndicatesLoggedIn) {
+          // Check if this is a principal/teacher page
+          const isPrincipalOrTeacher = url.includes('right_teacher_startpage.jsp') || 
+                                       url.includes('right_principal_startpage.jsp') ||
+                                       url.includes('/teacher/') ||
+                                       url.includes('/principal/') ||
+                                       url.includes('/rektor/');
+          
+          // For principals/teachers, be even more lenient
+          if (isPrincipalOrTeacher) {
+            // For principals/teachers, if URL pattern matches, accept with minimal checks
+            // They might be on a dashboard that doesn't show schedule immediately
+            if (pageChecks.hasNoLoginForms) {
+              console.log('Login verified: Principal/Teacher URL pattern + no login forms');
+              return true;
+            }
+            
+            // Also check for common principal/teacher page elements
+            const hasPrincipalTeacherContent = await webview.value.executeJavaScript(`
+              (function() {
+                // Check for common SchoolSoft logged-in page elements
+                const hasSidebar = document.querySelector('.sidebar, [class*="sidebar"], [id*="sidebar"]');
+                const hasMainContent = document.querySelector('.main-content, [class*="main"], [id*="main"]');
+                const hasTabs = document.querySelector('.tabs, [class*="tab"], [id*="tab"]');
+                const hasMenu = document.querySelector('.menu, [class*="menu"], [id*="menu"]');
+                
+                return hasSidebar || hasMainContent || hasTabs || hasMenu;
+              })();
+            `);
+            
+            if (hasPrincipalTeacherContent) {
+              console.log('Login verified: Principal/Teacher page structure detected');
+              return true;
+            }
+          }
+          
+          // For logged-in URLs, accept if we have any positive indicators
+          const hasAnyLoggedInIndicator = 
+            pageChecks.hasStudentSchedule ||
+            pageChecks.hasCalendarElements ||
+            (pageChecks.hasNavMenus && pageChecks.hasNoLoginForms) ||
+            pageChecks.hasUserContent;
+          
+          if (hasAnyLoggedInIndicator) {
+            console.log('Login verified: URL pattern + page content match');
+            return true;
+          }
+          
+          // Even if no schedule found, if URL pattern matches and no login forms, assume logged in
+          // (user might need to navigate to schedule page manually)
+          if (pageChecks.hasNoLoginForms && pageChecks.hasNavMenus) {
+            console.log('Login verified: URL pattern matches, no login forms detected');
+            return true;
+          }
+        }
+        
+        // Fallback: check for student schedule elements (original behavior)
+        if (pageChecks.hasStudentSchedule) {
+          console.log('Login verified: Student schedule elements found');
+          return true;
+        }
+        
+        console.log('Login not verified:', { urlIndicatesLoggedIn, pageChecks });
+        return false;
       } catch (error) {
         console.error('Error checking login state:', error);
         return false;
@@ -236,6 +346,25 @@ export default defineComponent({
         showSchoolSelector.value = false;
         // Reset login state - will be checked when page loads
         isLoggedIn.value = false;
+        
+        // For principals/teachers, also check login state after navigation
+        // (they might navigate between pages after login)
+        const isPrincipalOrTeacher = event.url.includes('right_teacher_startpage.jsp') || 
+                                     event.url.includes('right_principal_startpage.jsp') ||
+                                     event.url.includes('/teacher/') ||
+                                     event.url.includes('/principal/') ||
+                                     event.url.includes('/rektor/');
+        
+        if (isPrincipalOrTeacher) {
+          // Wait a bit for page to load, then check login state
+          setTimeout(async () => {
+            const verified = await verifyLoginState();
+            if (verified) {
+              isLoggedIn.value = true;
+              console.log('Login detected after navigation for principal/teacher');
+            }
+          }, 1500);
+        }
       }
     };
 
@@ -250,14 +379,55 @@ export default defineComponent({
 
       // Check login state after page loads
       const urlIndicatesLogin = checkLoginState(url);
-      if (urlIndicatesLogin) {
-        // Verify by checking page content
+      
+      // For principals/teachers, be more aggressive with detection
+      const isPrincipalOrTeacher = url.includes('right_teacher_startpage.jsp') || 
+                                   url.includes('right_principal_startpage.jsp') ||
+                                   url.includes('/teacher/') ||
+                                   url.includes('/principal/') ||
+                                   url.includes('/rektor/');
+      
+      if (urlIndicatesLogin || isPrincipalOrTeacher) {
+        // For principals/teachers, wait a bit longer for page to fully load
+        const delay = isPrincipalOrTeacher ? 1500 : 500;
+        
+        // Verify by checking page content (with retry for principals/teachers)
         setTimeout(async () => {
-          const verified = await verifyLoginState();
-          isLoggedIn.value = verified;
-        }, 500);
+          let verified = await verifyLoginState();
+          
+          // If not verified and it's a principal/teacher, retry after a longer delay
+          if (!verified && isPrincipalOrTeacher) {
+            console.log('First check failed for principal/teacher, retrying after longer delay...');
+            setTimeout(async () => {
+              verified = await verifyLoginState();
+              isLoggedIn.value = verified;
+              
+              if (!verified) {
+                console.warn('Login not verified for teacher/principal after retry.');
+                console.log('Current URL:', url);
+                console.log('This might be normal if you need to navigate to a schedule page first.');
+              } else {
+                console.log('Login verified for principal/teacher on retry!');
+              }
+            }, 2000);
+          } else {
+            isLoggedIn.value = verified;
+            
+            // Log helpful information if login not verified
+            if (!verified) {
+              const urlLower = url.toLowerCase();
+              if (urlLower.includes('teacher') || urlLower.includes('principal') || urlLower.includes('rektor')) {
+                console.warn('Login not verified for teacher/principal. User may need to navigate to schedule page.');
+                console.log('Current URL:', url);
+              } else {
+                console.warn('Login not verified. Make sure you are on a schedule page with visible lessons.');
+              }
+            }
+          }
+        }, delay);
       } else {
         isLoggedIn.value = false;
+        console.log('URL does not indicate logged-in state:', url);
       }
     };
 
@@ -267,11 +437,123 @@ export default defineComponent({
       isImporting.value = true;
       
       try {
-        const html = await webview.value.executeJavaScript('document.body.innerHTML');
         const url = webview.value.getURL();
         
-        if (window.api && window.api.parseSchoolSoft) {
-          const result = await window.api.parseSchoolSoft({ html, url });
+        // Detect if user is principal/teacher - they should import ALL data
+        const isPrincipalOrTeacher = url.includes('right_teacher_startpage.jsp') || 
+                                     url.includes('right_principal_startpage.jsp') ||
+                                     url.includes('/teacher/') ||
+                                     url.includes('/principal/') ||
+                                     url.includes('/rektor/');
+        
+        if (isPrincipalOrTeacher) {
+          console.log('Principal/Teacher detected - collecting comprehensive data...');
+          
+          // For principals/teachers, try to navigate to week view to get more data
+          // First, get current page
+          let allClasses = [];
+          let allTeachers = new Set();
+          let allStudents = new Set();
+          
+          // Try to navigate to week view if not already there
+          const currentUrl = webview.value.getURL();
+          if (!currentUrl.includes('view=week')) {
+            try {
+              // Try to click week view button or navigate to week view
+              await webview.value.executeJavaScript(`
+                (function() {
+                  const weekLink = document.querySelector('a[href*="view=week"], a[href*="week="]');
+                  if (weekLink) {
+                    weekLink.click();
+                    return true;
+                  }
+                  return false;
+                })();
+              `);
+              
+              // Wait for navigation
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            } catch (e) {
+              console.log('Could not navigate to week view, continuing with current page');
+            }
+          }
+          
+          // Parse current page
+          if (!window.api || !window.api.parseSchoolSoft) {
+            throw new Error('parseSchoolSoft API not available');
+          }
+          
+          let html = await webview.value.executeJavaScript('document.body.innerHTML');
+          let result = await window.api.parseSchoolSoft({ html, url: webview.value.getURL() });
+          
+          if (result && result.success && result.data) {
+            allClasses = result.data.classes || [];
+            (result.data.teachers || []).forEach(t => allTeachers.add(t.initials));
+            (result.data.studentGroups || []).forEach(s => allStudents.add(s.className));
+            
+            console.log(`Initial parse: ${allClasses.length} classes, ${allTeachers.size} teachers, ${allStudents.size} students`);
+          }
+          
+          // Try to get data from multiple weeks (if week view is available)
+          try {
+            const weekLinks = await webview.value.executeJavaScript(`
+              (function() {
+                const links = Array.from(document.querySelectorAll('a[href*="week="], a[href*="view=week"]'));
+                return links.slice(0, 4).map(l => l.href); // Get up to 4 weeks
+              })();
+            `);
+            
+            if (weekLinks && weekLinks.length > 0) {
+              for (const weekUrl of weekLinks.slice(0, 3)) { // Limit to 3 additional weeks
+                try {
+                  await webview.value.loadURL(weekUrl);
+                  await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for load
+                  
+                  html = await webview.value.executeJavaScript('document.body.innerHTML');
+                  result = await window.api.parseSchoolSoft({ html, url: weekUrl });
+                  
+                  if (result && result.success && result.data) {
+                    allClasses = [...allClasses, ...(result.data.classes || [])];
+                    (result.data.teachers || []).forEach(t => allTeachers.add(t.initials));
+                    (result.data.studentGroups || []).forEach(s => allStudents.add(s.className));
+                    console.log(`Week ${weekUrl}: Added ${result.data.classes?.length || 0} classes`);
+                  }
+                } catch (e) {
+                  console.log(`Error parsing week ${weekUrl}:`, e);
+                }
+              }
+              
+              // Navigate back to original page
+              await webview.value.loadURL(url);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          } catch (e) {
+            console.log('Could not parse multiple weeks:', e);
+          }
+          
+          // Combine all data
+          result = {
+            success: true,
+            data: {
+              ...result.data,
+              classes: allClasses,
+              teachers: Array.from(allTeachers).map(t => ({ initials: t, subjects: [], classes: [] })),
+              studentGroups: Array.from(allStudents).map(s => ({ className: s, subjects: [], teachers: [] }))
+            }
+          };
+          
+          console.log(`Final combined: ${allClasses.length} classes, ${allTeachers.size} teachers, ${allStudents.size} students`);
+        } else {
+          // For students, just parse current page
+          const html = await webview.value.executeJavaScript('document.body.innerHTML');
+          if (window.api && window.api.parseSchoolSoft) {
+            result = await window.api.parseSchoolSoft({ html, url });
+          } else {
+            throw new Error('parseSchoolSoft API not available');
+          }
+        }
+        
+        if (window.api && window.api.parseSchoolSoft && result) {
           
           if (result.success) {
             // DIRECT NAVIGATION TO VIEWER
@@ -554,12 +836,51 @@ export default defineComponent({
             }
           } else {
             console.error('Parsing failed:', result.error);
-            alert('Could not find schedule data. Please make sure you are on the schedule page.');
+            
+            // Provide user-friendly error messages based on role and error type
+            let errorMessage = 'Could not find schedule data.';
+            
+            if (result.userRole) {
+              if (result.userRole === 'teacher' || result.userRole === 'principal') {
+                errorMessage = `No schedule data found for ${result.userRole} account.\n\n` +
+                  `Please make sure you:\n` +
+                  `1. Are logged into SchoolSoft\n` +
+                  `2. Navigate to your schedule/calendar page\n` +
+                  `3. Ensure lessons are visible on the page\n\n` +
+                  `Note: Teachers and principals may need to navigate to a specific schedule view.`;
+              } else {
+                errorMessage = `Could not find schedule data. Please make sure you are on the schedule page with lessons visible.`;
+              }
+            } else if (result.error) {
+              // Use the error message from the parser if available
+              errorMessage = result.error;
+            } else {
+              errorMessage = 'Could not find schedule data. Please make sure you are on the schedule page.';
+            }
+            
+            alert(errorMessage);
           }
+        } else {
+          console.error('parseSchoolSoft API not available');
+          alert('Import functionality is not available. Please refresh the page and try again.');
         }
       } catch (error) {
         console.error('Import failed:', error);
-        alert('Failed to import. Please try again.');
+        
+        // Provide more specific error messages
+        let errorMessage = 'Failed to import schedule.';
+        
+        if (error.message) {
+          if (error.message.includes('timeout') || error.message.includes('network')) {
+            errorMessage = 'Import timed out. Please check your internet connection and try again.';
+          } else if (error.message.includes('parse') || error.message.includes('JSON')) {
+            errorMessage = 'Failed to parse schedule data. Please make sure you are on a valid schedule page.';
+          } else {
+            errorMessage = `Import error: ${error.message}`;
+          }
+        }
+        
+        alert(errorMessage);
       } finally {
         isImporting.value = false;
       }
